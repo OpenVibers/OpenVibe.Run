@@ -7,10 +7,11 @@
  *   valkey        optional  a real PING; without it nothing is shared between processes
  *   network_jwks  optional  the Network signing key has loaded; without it no token can be verified
  *   events        optional  OpenVibe.Events answers /api/health; without it run.job.* events wait in the outbox
- *   bot           optional  OpenVibe.Bot answers /api/health; skipped until the dispatcher bridge exists
+ *   bot           optional  OpenVibe.Bot answers /api/health; skipped when Run cannot call it (no OV_OAUTH_CLIENT_SECRET)
  *
  * Gauges: jobs queued, placed or running, ended, and the outbox backlog. Counts only, never subjects, and
- * never a job's payload; a scrape whose read failed leaves them out.
+ * never a job's payload; a scrape whose read failed leaves them out. The details also carry the poller's
+ * own status (server/jobs/poller.js) so a job that is not moving can be told from one that is mid-flight.
  */
 const { sql } = require('openvibe-sdk/db');
 const { createReadiness, skip } = require('openvibe-shared/ready');
@@ -32,7 +33,7 @@ function createRunReadiness({ db, valkey = null, keys, config, outbox, stream = 
         : () => skip('events relay off (EVENTS_URL or OV_OAUTH_CLIENT_SECRET unset): run.job.* events wait in the outbox');
     const bot = dispatch && dispatch.enabled
         ? probe(`${config.dispatch.botUrl}/api/health`, fetchImpl)
-        : () => skip('the dispatcher bridge to Bot is not built yet (plan T14 step 6): jobs stay queued');
+        : () => skip('the dispatcher bridge to Bot is off (no OV_OAUTH_CLIENT_SECRET): no job leaves queued');
     return createReadiness({
         service: 'run',
         release,
@@ -44,13 +45,21 @@ function createRunReadiness({ db, valkey = null, keys, config, outbox, stream = 
             { name: 'bot', required: false, cacheMs: dispatch && dispatch.enabled ? PING_TTL_MS : 0, timeoutMs: 2500, check: bot },
         ],
         details: async (body) => (body.checks.db.status === 'ok'
-            ? { jobs_queued: await queued(db), events_outbox: await outbox.status(), streams: stream ? stream.status().streams : null }
-            : { jobs_queued: null, events_outbox: null, streams: null }),
+            ? {
+                jobs_queued: await queued(db), jobs_active: await active(db), events_outbox: await outbox.status(),
+                streams: stream ? stream.status().streams : null, poller: dispatch ? dispatch.status().poller : null,
+            }
+            : { jobs_queued: null, jobs_active: null, events_outbox: null, streams: null, poller: null }),
     });
 }
 
 async function queued(db) {
     return Number(await db.value(`SELECT count(*)::int FROM run_jobs WHERE state = 'queued'`) || 0);
+}
+
+/** Jobs on a node: placed or running (what the poller mirrors from Bot). */
+async function active(db) {
+    return Number(await db.value(`SELECT count(*)::int FROM run_jobs WHERE state IN ('placed', 'running')`) || 0);
 }
 
 /** Run's gauges on the openvibe-shared/metrics registry; refresh() reads them all in one query. */

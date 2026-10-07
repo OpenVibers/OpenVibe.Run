@@ -21,8 +21,10 @@ async function main() {
             assert.strictEqual(r.json.version, require('../package.json').version);
             assert.strictEqual(r.json.streams, 0);
             assert.strictEqual(r.json.events.enabled, false);                       // EVENTS_URL unset in the test
-            assert.strictEqual(r.json.dispatcher.enabled, false);                   // plan T14 step 6 is not built
-            assert.match(r.json.dispatcher.note, /T14 step 6/);
+            // The dispatcher bridge exists (plan T14 step 6), but without OV_OAUTH_CLIENT_SECRET Run cannot
+            // mint the Bot token it needs: nothing is sent and every job stays queued.
+            assert.strictEqual(r.json.dispatcher.enabled, false);
+            assert.match(r.json.dispatcher.note, /OV_OAUTH_CLIENT_SECRET/);
         });
 
         await check('readiness: GET /api/ready reports the database, and honestly skips what is absent', async () => {
@@ -38,8 +40,10 @@ async function main() {
             assert.strictEqual(r.json.checks.valkey.status, 'skipped');              // VALKEY_URL unset
             assert.strictEqual(r.json.checks.events.status, 'skipped');              // the relay is off
             assert.strictEqual(r.json.checks.bot.status, 'skipped');
-            assert.match(r.json.checks.bot.reason, /T14 step 6/);
+            assert.match(r.json.checks.bot.reason, /OV_OAUTH_CLIENT_SECRET/);        // not probed: Run cannot call Bot
             assert.strictEqual(r.json.jobs_queued, 0);
+            assert.strictEqual(r.json.jobs_active, 0);
+            assert.strictEqual(r.json.poller.running, false);                        // nothing starts in the app factory
             assert.strictEqual(r.json.events_outbox.pending, 0);
             assert.strictEqual(r.json.checks.network_jwks.status, 'ok');             // the stub Network's key loaded
         });
@@ -66,7 +70,7 @@ async function main() {
             assert.strictEqual(proxied.status, 404);
         });
 
-        await check('a job that stays queued: the dispatcher seam hands nothing to a node', async () => {
+        await check('with no Bot credentials the bridge is off: a submitted job stays queued', async () => {
             const made = await t.call('POST', '/api/v1/jobs', { body: t.request(), cap: ['run.job.submit'], project, sub: 'svc:builder' });
             assert.strictEqual(made.status, 201, made.text);
             assert.strictEqual(made.json.job.state, 'queued');
