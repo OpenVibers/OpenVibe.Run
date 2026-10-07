@@ -115,6 +115,8 @@ async function boot(opts = {}) {
         OV_OAUTH_CLIENT_ID: 'run',
         OV_OAUTH_CLIENT_SECRET: '',
         RUN_JOBS: 'off',
+        // No offers cache in tests: a check that changes the published offers (t.setOffers) must see them at once.
+        RUN_OFFERS_TTL_MS: '0',
         RUN_STREAM_PRIVATE_KEY: crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' }).replace(/\n/g, '\\n'),
         ...(opts.env || {}),
     };
