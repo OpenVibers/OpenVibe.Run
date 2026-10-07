@@ -592,7 +592,8 @@ async function main() {
             t.setOffers([offer()]);
             const project = PROJECT();
             const job = await submit({}, { project });
-            await t.dispatch.poll();
+            // Other checks may have left waiting jobs ahead of this one in the per-tick budget: poll until it is sent.
+            for (let i = 0; i < 10 && !bot.jobs.get(job.id); i++) await t.dispatch.poll();
             const row = bot.jobs.get(job.id);
             assert.ok(row, `the job reached Bot (${JSON.stringify((await read(job.id, project)).json.state)})`);
             row.node_id = OTHER_DEVICE;                     // Bot claims another node
