@@ -203,3 +203,9 @@ Not deployed yet: `openvibe.run` has no DNS, no `ovhost` inventory entry, no `ov
 | `.github/workflows/ci.yml` | CI: the shared test job (syntax, tests, `openvibe-contracts-check --service run`) and the shared security job |
 | `migrations/0001_jobs.sql` | `run_jobs` and `run_events_outbox` |
 | `STATUS.json` | What this repository is, what it does today and where it runs |
+
+<!-- versions:start -->
+- openvibe-contracts: v0.112.0
+- openvibe-sdk: v0.34.0
+- openvibe-shared: v2.11.0
+<!-- versions:end -->
