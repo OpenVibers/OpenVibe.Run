@@ -55,6 +55,7 @@ function createPoller({ config, db, store, events, stream, bot, placement, now =
     const stat = { ticks: 0, swept: 0, placed: 0, sent: 0, mirrored: 0, cancels_sent: 0, failed: 0, expired: 0, errors: 0, last_tick_at: null, last_error: null };
     let timer = null;
     let busy = false;
+    let inflight = null;   // the tick in progress, so a caller can wait for it instead of skipping
 
     const note = (id, state, extra = {}) => ({ job_id: id, state, ...extra });
 
@@ -371,8 +372,11 @@ function createPoller({ config, db, store, events, stream, bot, placement, now =
 
     /** One poll: the sweep, then placement, then the mirror. Never two ticks at once. */
     async function tick() {
-        if (!bot.enabled || busy) return [];
+        if (!bot.enabled) return [];
+        if (busy) return (await inflight.catch(() => null), []);   // one tick at a time; the timer's next one runs later
         busy = true;
+        let release;
+        inflight = new Promise((r) => { release = r; });
         const answers = [];
         try {
             stat.ticks++;
@@ -400,6 +404,7 @@ function createPoller({ config, db, store, events, stream, bot, placement, now =
         } finally {
             busy = false;
             stat.last_tick_at = now();
+            release();
         }
         stream.prune();
         return answers.filter(Boolean);
