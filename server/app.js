@@ -51,9 +51,10 @@ function createApp(opts = {}) {
     const events = opts.events || createRunEvents({ outbox, now, log });
     const stream = opts.stream || createJobStream({ config, now, log });
     const tickets = opts.tickets || createStreamTickets({ config, now, log });
-    // The dispatcher bridge to Bot: a no-op until plan T14 step 6 (server/dispatch/index.js), so a job
-    // stays queued and no node ever sees it.
-    const dispatch = opts.dispatch || createDispatcher({ config, db, store: require('./jobs/store'), events, stream, log, now });
+    // The dispatcher bridge to Bot (plan T14 step 6, server/dispatch/index.js): placement from the Fabric
+    // offers and the job loop that sends, mirrors and cancels. It is off without OV_OAUTH_CLIENT_SECRET —
+    // Run cannot mint the Bot token — and nothing runs until server/index.js calls its start().
+    const dispatch = opts.dispatch || createDispatcher({ config, db, store: require('./jobs/store'), events, stream, log, now, fetchImpl });
     const apiAuth = createApiAuth({ config, keys, userAuth });
     const release = require('openvibe-shared/release').createRelease({ service: 'run', root: path.join(__dirname, '..') });
 

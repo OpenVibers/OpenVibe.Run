@@ -12,7 +12,7 @@
  * | GET  /jobs?state=&limit=&cursor=  | run.job.list     | run.job-list-query@1 → run.job-list-result@1   |
  * | POST /jobs/:id/cancel             | run.job.cancel   | common.no-body@1 → run.job-read-result@1       |
  * | POST /jobs/:id/stream/ticket      | run.job.stream   | common.no-body@1 → run.job-stream-ticket-result@1 |
- * | GET  /jobs/:id/stream             | run.job.stream   | a ticket (never a service token) → text/event-stream of run.job-stream-event@1 |
+ * | GET  /jobs/:id/stream             | run.job.stream   | a ticket in the query or a Bearer token → text/event-stream of run.job-stream-event@1 |
  * | GET  /admin/jobs                  | run.job.admin    | run.job-list-query@1 (with project_id) → run.job-list-result@1 |
  *
  * The project and the requester always come from the token (claims.project_id, claims.sub), NEVER from the
@@ -23,6 +23,11 @@
  * Errors are RFC 9457 problem+json: 400 run.invalid_request (the body does not match its contract), 401
  * token.required / ticket.*, 403 capability.denied / run.project_required, 404 run.job_not_found, 409
  * run.idempotency.conflict, 413 run.args_too_large, 422 run.limits.exceeded / run.invalid_input.
+ *
+ * Cancelling is a request, not a state change of its own (plan T14 step 6): a queued job — sent to no node —
+ * is cancelled at once, while a placed or running one is marked cancel_requested, Bot is asked for its
+ * job_cancel (and asked again by the poller until the job ends), and the job reaches `cancelled` when Bot
+ * reports it. Run never says cancelled for work a node may still be doing.
  */
 const express = require('express');
 const contracts = require('openvibe-contracts');
@@ -142,8 +147,8 @@ function v1Router({ config, db, apiAuth, stream, tickets, events, dispatch, now 
             if (made.created) await events.queued(t, made.row, { traceparent: req.ov && req.ov.traceparent });
             return made;
         });
-        // The job stays queued: the dispatcher bridge is plan T14 step 6 (server/dispatch/index.js).
-        if (out.created && dispatch.enabled) await dispatch.place(out.row);
+        // The job stays queued here; the dispatcher's poller places and sends it (server/dispatch/index.js
+        // → server/jobs/poller.js), so a submit never waits on Network or Bot.
         if (out.created) stream.seed(out.row);
         res.status(out.created ? 201 : 200).json({ created: out.created, job: store.readResult(out.row) });
     }));
@@ -175,8 +180,10 @@ function v1Router({ config, db, apiAuth, stream, tickets, events, dispatch, now 
             if (moved.cancelled) await events.cancelled(t, moved.row, { traceparent: req.ov && req.ov.traceparent });   // run:<id>:cancelled — a replay is the same row
             return moved;
         });
-        // A running job is only marked: the dispatcher bridge sends job_cancel and its job_exit ends it (step 6).
-        if (out.cancelRequested && dispatch.enabled) await dispatch.cancel(out.row);
+        // A placed or running job is only marked cancel_requested: Bot may already have it on a node, so the
+        // dispatcher sends job_cancel (here, and again on the next tick if this call did not land) and the
+        // job reaches `cancelled` when Bot reports it (step 6).
+        if (out.cancelRequested) await dispatch.cancel(out.row);
         if (out.cancelled) stream.state(out.row.id, out.row.state, at);
         res.json(store.readResult(out.row));
     }));
@@ -194,17 +201,34 @@ function v1Router({ config, db, apiAuth, stream, tickets, events, dispatch, now 
         }));
     }));
 
-    // ── GET /jobs/:id/stream — run.job.stream, ticket only ─────────────────────
-    // A browser cannot send a header on an EventSource, and a service token must never ride in a query
-    // string (it would land in logs): this route accepts the two-minute ticket the POST above mints, and
-    // nothing else. The ticket names the job and the project, so the stream is scoped without any query.
+    // ── GET /jobs/:id/stream — run.job.stream: a ticket, or a Bearer service token ─────
+    // A browser cannot send a header on an EventSource, so the POST above mints a two-minute ticket and this
+    // route accepts it in the query. A service that can send a header uses its own Network service token
+    // holding run.job.stream instead (the manifest: "GET /api/v1/jobs/:id/stream?ticket= (or with a Bearer
+    // token)"); a token is never accepted in the query string, where it would land in logs.
     r.get('/jobs/:id/stream', wrap(async (req, res) => {
         const token = Array.isArray(req.query.ticket) ? null : req.query.ticket;
-        if (token == null || token === '') fail(401, 'ticket.required', 'open the stream with ?ticket= from POST /api/v1/jobs/:id/stream/ticket');
-        const verified = tickets.verify(token);   // single use: the jti is consumed here, so one ticket opens one stream
-        if (!verified.ok) fail(401, verified.code, verified.reason);
-        if (verified.claims.sub !== req.params.id) fail(403, 'run.stream.ticket_mismatch', 'this ticket is for another job');
-        const row = await store.get(db, req.params.id, verified.claims.project);
+        const bearer = String(req.headers.authorization || '').startsWith('Bearer ');
+        let row = null;
+        if (token) {
+            const verified = tickets.verify(token);   // single use: the jti is consumed here, so one ticket opens one stream
+            if (!verified.ok) fail(401, verified.code, verified.reason);
+            if (verified.claims.sub !== req.params.id) fail(403, 'run.stream.ticket_mismatch', 'this ticket is for another job');
+            row = await store.get(db, req.params.id, verified.claims.project);
+        } else if (bearer) {
+            // The same capability the other routes' guards enforce, checked here because this route's other
+            // door is a query string a middleware cannot see.
+            const p = req.principal;
+            if (p.kind !== 'service') fail(403, 'capability.denied', 'run.job.stream is granted to service principals only');
+            const decision = contracts.capabilities.check(p.claims, 'run.job.stream');
+            if (!decision.allowed) fail(403, decision.code || 'capability.denied', decision.reason);
+            const project = apiAuth.projectOf(p);
+            if (!project) fail(403, 'run.project_required', 'this token names no project: a stream is scoped to the project the token names');
+            if (!isJobId(req.params.id)) fail(404, 'run.job_not_found', 'no such job');
+            row = await store.get(db, req.params.id, project);   // another project's job: 404, never 403
+        } else {
+            fail(401, 'ticket.required', 'open the stream with ?ticket= from POST /api/v1/jobs/:id/stream/ticket, or with a Bearer token holding run.job.stream');
+        }
         if (!row) fail(404, 'run.job_not_found', 'no such job');
         if (!stream.canAttach(row.id)) fail(503, 'run.stream.busy', 'too many streams on this job; try again shortly');
 

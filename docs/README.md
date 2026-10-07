@@ -7,9 +7,10 @@ capability manifests: `contracts/generated/openapi/run.json` once `manifests/ser
 
 What does live here:
 
-- `protocol.md` — how Run and Bot talk when the dispatcher bridge lands (plan T14 step 6): the
-  `platform.job@1` body it sends, the `platform.job-frame@1` answers it mirrors, and the state mapping. Not written
-  yet: the bridge does not exist.
+The dispatcher bridge itself needs no page here: `server/dispatch/index.js` (the seam), `server/dispatch/bot.js`
+(Run → Bot over `bot.job.dispatch`), `server/dispatch/placement.js` (offers → `platform.placement-result@1`) and
+`server/jobs/poller.js` (the loop) carry their own headers, and the README's "How a job runs" is the end-to-end
+account. Bot's side is `OpenVibe.Bot/docs/protocol.md` (the device link and the job frames).
 
 Nothing else is a document here. The README's route table is the API as it is served today, and `STATUS.json` is
 what this repository is.

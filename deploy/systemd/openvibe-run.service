@@ -1,9 +1,10 @@
 [Unit]
 Description=OpenVibe.Run — the job service (jobs, placement, streaming; plan T14, ADR-034)
-# Network (sign-in, JWKS, OAuth) should be up first, and Run's own PostgreSQL (pooled runtime role plus
-# the direct owner role for migrations) and Valkey (state shared between processes) are required to
-# serve; the events relay waits in the outbox and the dispatcher bridge to Bot (plan T14 step 6) is a
-# no-op until it exists. Run degrades honestly without any of them: /api/ready says which (STATUS).
+# Network (sign-in, JWKS, OAuth for the job offers and the Bot token) should be up first, and Run's own
+# PostgreSQL (pooled runtime role plus the direct owner role for migrations) and Valkey (state shared
+# between processes) are required to serve; the events relay waits in the outbox and OpenVibe.Bot is
+# needed for a job to run at all (RUN_BOT_URL; without OV_OAUTH_CLIENT_SECRET jobs stay queued). Run
+# degrades honestly without any of them: /api/ready says which, and the poller's own status is in it.
 After=network.target postgresql.service pgbouncer.service valkey-server.service
 Wants=openvibe-network.service postgresql.service pgbouncer.service valkey-server.service
 

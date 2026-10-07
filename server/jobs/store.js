@@ -166,6 +166,22 @@ function list(db, projectId, { state = null, limit = 50, cursor = null } = {}) {
     return page(db, where, values, limit, cursor ? readCursor(cursor) : null);
 }
 
+/**
+ * The dispatcher bridge's three reads (plan T14 step 6, server/jobs/poller.js). Row access only: every
+ * state change happens in the poller's transaction, so the run.job.* event exists if and only if it
+ * committed. No migration adds a state index (0001_jobs.sql is the final schema), so each is a plain scan
+ * of a small table; the poller bounds how much of it one tick takes.
+ */
+
+/** Jobs still waiting for a node, oldest first: what the poller places and sends. */
+const waiting = (db, limit) => db.many(`SELECT * FROM run_jobs WHERE state = 'queued' ORDER BY created_at, id LIMIT $1`, [limit]);
+
+/** Jobs a node may hold — placed or running — oldest first: what the poller mirrors from Bot. */
+const active = (db, limit) => db.many(`SELECT * FROM run_jobs WHERE state IN ('placed', 'running') ORDER BY created_at, id LIMIT $1`, [limit]);
+
+/** Jobs whose lifetime ran out (created_at + ttl_ms <= at) and that have not ended, oldest first: the sweeper. */
+const dueTtl = (db, at, limit = 500) => db.many(`SELECT * FROM run_jobs WHERE state IN ('queued', 'placed', 'running') AND created_at + ttl_ms <= $1 ORDER BY created_at, id LIMIT $2`, [at, limit]);
+
 /** Every project's jobs: GET /api/v1/admin/jobs (run.job.admin); project_id narrows it. */
 function adminList(db, { project_id: projectId = null, state = null, limit = 50, cursor = null } = {}) {
     const where = [];
@@ -176,20 +192,23 @@ function adminList(db, { project_id: projectId = null, state = null, limit = 50,
 }
 
 /**
- * Cancel one job (POST /api/v1/jobs/:id/cancel, run.job.cancel). A queued or placed job never starts:
- * cancelled now. A running one is marked cancel_requested and stays running until its job_exit arrives
- * (the dispatcher bridge sends job_cancel in plan T14 step 6). An ended job changes nothing.
+ * Cancel one job (POST /api/v1/jobs/:id/cancel, run.job.cancel). A queued job was never sent anywhere:
+ * cancelled now. A placed or running job may be on a node this instant (Run marked it placed as soon as
+ * Bot took the frame, before the node's job_started arrived), so it is only marked cancel_requested: the
+ * dispatcher bridge sends job_cancel and the job reaches `cancelled` when Bot reports it (plan T14 step 6,
+ * job_exit reason cancelled). An ended job changes nothing.
  * → { row, cancelled, cancelRequested } — cancelled means the row moved to 'cancelled' now.
  */
 async function cancel(db, id, projectId, at) {
     const moved = await db.maybe(
         `UPDATE run_jobs SET state = 'cancelled', updated_at = $3, finished_ms = $3
-         WHERE id = $1 AND project_id = $2 AND state IN ('queued', 'placed') RETURNING *`,
+         WHERE id = $1 AND project_id = $2 AND state = 'queued' RETURNING *`,
         [id, projectId, at]);
     if (moved) return { row: moved, cancelled: true, cancelRequested: false };
     const asked = await db.maybe(
         `UPDATE run_jobs SET job = jsonb_set(job, '{cancel_requested}', 'true'::jsonb), updated_at = $3
-         WHERE id = $1 AND project_id = $2 AND state = 'running' AND job->>'cancel_requested' IS DISTINCT FROM 'true' RETURNING *`,
+         WHERE id = $1 AND project_id = $2 AND state IN ('placed', 'running')
+           AND job->>'cancel_requested' IS DISTINCT FROM 'true' RETURNING *`,
         [id, projectId, at]);
     if (asked) return { row: asked, cancelled: false, cancelRequested: true };
     return { row: await get(db, id, projectId), cancelled: false, cancelRequested: false };
@@ -202,12 +221,14 @@ async function cancel(db, id, projectId, at) {
  */
 async function mirror(db, id, bot = {}, at) {
     const placed = bot.node_id ? at : null;
-    // Bot's answer moves the row only into a state the row can back: run.job-read-result@1 requires a
-    // placement for placed/running/succeeded and started_at for running, so an answer missing them leaves
-    // the state as it is (the bridge sends the placement with the state it describes).
+    // Bot's answer moves the row only into a state the row can back: an end state never changes (the answer
+    // of a job the API cancelled or the ttl swept while the poll was in flight cannot revive it), Run's
+    // requirements (run.job-read-result@1: a placement for placed/running/succeeded, started_at for running)
+    // decide the rest, and an answer missing them leaves the state as it is.
     return db.maybe(
         `UPDATE run_jobs SET
              state = CASE
+                 WHEN state IN ('succeeded', 'failed', 'cancelled', 'expired') THEN state
                  WHEN $2::text IS NULL THEN state
                  WHEN $2::text IN ('placed', 'running', 'succeeded') AND COALESCE($3, node_id) IS NULL THEN state
                  WHEN $2::text = 'running' AND COALESCE($6, started_ms) IS NULL THEN state
@@ -306,4 +327,6 @@ function readResult(row) {
 module.exports = {
     // The store surface the API and the dispatcher bridge (plan T14 step 6) use.
     put, mint, get, list, adminList, cancel, mirror, settle, toJob, readResult, frameOf,
+    // The poller's reads (waiting → placed → active → ended).
+    waiting, active, dueTtl,
 };

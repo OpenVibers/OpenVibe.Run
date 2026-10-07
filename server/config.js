@@ -71,9 +71,10 @@ function loadConfig(env = process.env) {
             intervalMs: int(env.EVENTS_RELAY_INTERVAL_MS, 2000),
         },
 
+        // The background jobs (the events relay and the dispatcher poller); RUN_JOBS=off runs the API alone,
+        // which is what tests do (they drive dispatch.poll() by hand).
         jobs: {
             enabled: env.RUN_JOBS !== 'off',
-            intervalMs: int(env.RUN_JOBS_INTERVAL_MS, 5000),
         },
 
         // What a project's token may ask for (run.job-create-request@1 $defs.limits): a request over one of
@@ -103,13 +104,20 @@ function loadConfig(env = process.env) {
         },
 
         // The dispatcher bridge to Bot (plan T14 step 6, R1c): Bot holds the node link and the per-second
-        // metering; Run calls it as the service principal `svc:run` for audience openvibe.bot. Until step 6
-        // server/dispatch/index.js is a no-op and every job stays queued.
+        // metering; Run calls it as the service principal `svc:run` for audience openvibe.bot. Without
+        // OV_OAUTH_CLIENT_SECRET Run cannot mint that token and nothing is sent (jobs stay queued).
         dispatch: {
             botUrl: trim(env.RUN_BOT_URL || 'http://127.0.0.1:4630'),
             botAudience: env.RUN_BOT_AUDIENCE || 'openvibe.bot',
-            intervalMs: int(env.RUN_DISPATCH_INTERVAL_MS, 1000),
+            // One poll a second: place what is queued, mirror what is on a node (server/jobs/poller.js).
+            pollMs: Math.max(100, int(env.RUN_POLL_MS, 1000)),
             timeoutMs: int(env.RUN_DISPATCH_TIMEOUT_MS, 8000),
+            // The offers Run places from are cached this long, so one tick places many jobs off one read.
+            offersTtlMs: Math.max(0, int(env.RUN_OFFERS_TTL_MS, 5000)),
+            // Polls Bot answers 404 for a job Run sent before that job fails (never mirrored forever).
+            unknownPolls: Math.max(1, int(env.RUN_DISPATCH_UNKNOWN_POLLS, 5)),
+            // Jobs one tick places and mirrors; the next tick takes the rest.
+            maxPerTick: Math.max(1, int(env.RUN_DISPATCH_MAX_PER_TICK, 200)),
         },
     };
 }

@@ -10,9 +10,10 @@
  * refresher, the stream key, the events outbox relay and the dispatcher poller all start here, and the
  * signal handlers stop them in order.
  *
- * Background jobs (RUN_JOBS=off disables them): the events outbox relay and the job loop. The job loop
- * calls the dispatcher's poll() and sweep() — a no-op until the dispatcher bridge to Bot exists (plan T14
- * step 6, server/dispatch/index.js) — so today every job stays queued and no node ever sees one.
+ * Background jobs (RUN_JOBS=off disables them): the events outbox relay and the dispatcher's poller
+ * (plan T14 step 6, server/jobs/poller.js; one tick every RUN_POLL_MS), which places queued jobs on a node
+ * from the Fabric offers, sends them to Bot and mirrors what Bot answers. Without OV_OAUTH_CLIENT_SECRET
+ * Run cannot mint its Bot token and every job stays queued.
  */
 const { loadConfig } = require('./config');
 const { openDb, migrate } = require('./db');
@@ -34,23 +35,17 @@ async function main() {
     keys.start();
     const ticketKey = tickets.start();
 
-    const timers = [];
     if (config.jobs.enabled) {
-        const every = (ms, fn) => { const t = setInterval(() => { Promise.resolve().then(fn).catch((e) => console.warn('[Run] job:', e.message)); }, ms); t.unref(); timers.push(t); };
-        // The dispatcher bridge is a no-op until plan T14 step 6: poll() and sweep() answer [] and nothing
-        // changes, but the loop is wired the way the real bridge will run it.
-        every(config.dispatch.intervalMs, async () => {
-            const answers = await dispatch.poll();
-            if (answers.length) console.warn(`[Run] ${answers.length} dispatcher answer(s) ignored: ${dispatch.note}`);
-        });
-        every(config.jobs.intervalMs, () => dispatch.sweep());
+        // The dispatcher's poller owns its own interval (RUN_POLL_MS): one tick sweeps the ttl, places the
+        // queued jobs and mirrors every placed or running one (server/jobs/poller.js). Off without Bot
+        // credentials: start() then does nothing and every job stays queued.
         outbox.start();
         dispatch.start();
     }
 
     const server = app.listen(config.port, config.host, () => {
         console.log(`[Run] ${config.nodeEnv} on http://${config.host}:${config.port} → ${config.baseUrl} (store ${db.store}; valkey ${valkey ? 'on' : 'off: this process only'})`);
-        console.log(`[Run] jobs ${config.jobs.enabled ? 'on' : 'off (RUN_JOBS=off)'}; events relay ${outbox.enabled ? `→ ${config.events.url}` : 'off (run.job.* events wait in the outbox)'}; stream tickets ${ticketKey.enabled ? `on (${config.stream.keyId}${ticketKey.ephemeral ? ', ephemeral key' : ''})` : 'off (no stream key)'}; dispatcher ${dispatch.enabled ? `→ ${config.dispatch.botUrl}` : 'no-op until plan T14 step 6 (jobs stay queued)'}`);
+        console.log(`[Run] jobs ${config.jobs.enabled ? 'on' : 'off (RUN_JOBS=off)'}; events relay ${outbox.enabled ? `→ ${config.events.url}` : 'off (run.job.* events wait in the outbox)'}; stream tickets ${ticketKey.enabled ? `on (${config.stream.keyId}${ticketKey.ephemeral ? ', ephemeral key' : ''})` : 'off (no stream key)'}; dispatcher ${dispatch.enabled ? `on → ${config.dispatch.botUrl} (poll ${config.dispatch.pollMs} ms)` : 'off: no OV_OAUTH_CLIENT_SECRET, jobs stay queued'}`);
     });
     server.keepAliveTimeout = 65_000;
 
@@ -65,7 +60,6 @@ async function main() {
         deadlineMs: 5000,
         deadlineExitCode: 0,
         stop: [
-            () => timers.forEach(clearInterval),
             () => keys.stop(),
             () => tickets.stop(),
             () => dispatch.stop(),

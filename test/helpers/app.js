@@ -27,23 +27,67 @@ function listen(server) {
     return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`)));
 }
 
-/** OpenVibe.Network's two routes Run uses: the JWKS the key provider loads, and the tokens it verifies. */
+/**
+ * OpenVibe.Network's three routes Run uses: the JWKS the key provider loads, the tokens it verifies, and
+ * the /oauth/token endpoint its own client credentials mint Run's outgoing service tokens from (the
+ * dispatcher's token for audience openvibe.bot). tokenRequests counts the mint calls, so a test can see
+ * that the client caches its token instead of fetching one per call.
+ */
 async function startNetwork() {
     const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
     const publicPem = publicKey.export({ type: 'spki', format: 'pem' });
     const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' });
     const issuer = 'http://network.test';
+    const tokenRequests = { n: 0, audiences: [], scopes: [] };
+    const offers = [];   // what the registry publishes; a test replaces its contents (t.setOffers)
     const server = http.createServer((req, res) => {
         if (req.url === '/api/.well-known/jwks') {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             return res.end(JSON.stringify({ keys: [{ kty: 'RSA', kid: 'n1', ...publicKey.export({ format: 'jwk' }) }], public_key: publicPem }));
+        }
+        // The public resource registry Run places from (server/dispatch/placement.js): the offers a test
+        // publishes with t.setOffers(), filtered the way Network filters them.
+        if (req.method === 'GET' && req.url.startsWith('/api/v1/offers')) {
+            const query = new URL(req.url, 'http://network.test').searchParams;
+            const kind = query.get('kind');
+            const docs = kind ? offers.filter((o) => o.kind === kind) : offers;
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ offers: docs, count: docs.length, generated_at: new Date().toISOString(), filters: kind ? { kind } : {} }));
+        }
+        if (req.method === 'POST' && req.url === '/oauth/token') {
+            let body = '';
+            req.on('data', (chunk) => { body += chunk; });
+            req.on('end', () => {
+                const form = new URLSearchParams(body);
+                const audience = form.get('audience') || 'openvibe.run';
+                const scope = form.get('scope') || '';
+                if (form.get('grant_type') !== 'client_credentials' || !form.get('client_id') || !form.get('client_secret')) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ error: 'invalid_client' }));
+                }
+                tokenRequests.n++;
+                tokenRequests.audiences.push(audience);
+                tokenRequests.scopes.push(scope);
+                const now = Math.floor(Date.now() / 1000);
+                const access_token = serviceAuth.signServiceToken({
+                    iss: issuer, sub: 'svc:run', actor_type: 'service', aud: [audience],
+                    cap: scope ? scope.split(/\s+/).filter(Boolean) : ['bot.job.dispatch'],
+                    iat: now, exp: now + 300, jti: crypto.randomBytes(8).toString('hex'),
+                }, privatePem);
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ access_token, token_type: 'Bearer', expires_in: 300, scope }));
+            });
+            return undefined;
         }
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end('{}');
     });
     const url = await listen(server);
     return {
-        url, issuer, publicPem, privatePem, close: () => new Promise((r) => server.close(r)),
+        url, issuer, publicPem, privatePem, tokenRequests, offers,
+        /** Publish exactly these platform.resource-offer@1 documents (the array keeps its identity). */
+        setOffers(list) { offers.splice(0, offers.length, ...list); },
+        close: () => new Promise((r) => server.close(r)),
         /** A Network service token (identity.service-token-claims@1). */
         signService({ sub = 'svc:live', aud = ['openvibe.run'], cap = ['run.*'], project_id, actor_type = 'service', expSec = 300, env: tokenEnv } = {}) {
             const now = Math.floor(Date.now() / 1000);
@@ -208,6 +252,8 @@ async function boot(opts = {}) {
 
     return {
         app, base, call, sse, openStream, submit, request, db: app.locals.db, store, config, clock, network, logs, dir, stream, outbox, tickets, runEvents, dispatch,
+        // What the stub registry publishes for placement (server/dispatch/placement.js).
+        setOffers: (list) => network.setOffers(list),
         outboxRows, streamState: (jobId) => stream.ringOf(jobId),
         wait: (ms) => new Promise((r) => setTimeout(r, ms)),
         close: async () => {
