@@ -1,0 +1,48 @@
+{
+  "repository": "OpenVibers/OpenVibe.Run",
+  "stage": "alpha",
+  "code": true,
+  "wave": "W20",
+  "plan": "OpenVibe Updated Plan Based On Codebase (plan T14, ADR-034)",
+  "runtime": "node 22, express 4, PostgreSQL 18 (openvibe-sdk/db) + Valkey 9",
+  "port": 4920,
+  "domain": "openvibe.run",
+  "contracts": "openvibe-contracts v0.106.0",
+  "packages": [
+    "openvibe-contracts v0.106.0",
+    "openvibe-sdk v0.34.0",
+    "openvibe-shared v2.11.0"
+  ],
+  "capabilities": [
+    "run.job.submit",
+    "run.job.read",
+    "run.job.list",
+    "run.job.cancel",
+    "run.job.stream",
+    "run.job.admin"
+  ],
+  "events": [
+    "run.job.queued",
+    "run.job.started",
+    "run.job.succeeded",
+    "run.job.failed",
+    "run.job.cancelled",
+    "run.job.expired"
+  ],
+  "deployed": false,
+  "deployment": "Not deployed: openvibe.run has no DNS, no ovhost inventory entry, no ov_run database and no /etc/openvibe/run.env yet. The release is deploy/ (nginx vhost deploy/nginx/openvibe.run.conf, unit deploy/systemd/openvibe-run.service, WorkingDirectory /opt/openvibe.run, EnvironmentFile /etc/openvibe/run.env, PORT 4920). The vhost proxies /api/health, /api/ready and /release.json and the job API, takes the client address from $remote_addr only (never appending X-Forwarded-For), and refuses /internal/ and /metrics at the edge; the app refuses a proxied /metrics caller itself.",
+  "features": [
+    "the job API (/api/v1, one capability per route): POST /jobs (run.job.submit), GET /jobs/:id (run.job.read), GET /jobs/ (run.job.list), POST /jobs/:id/cancel (run.job.cancel), POST /jobs/:id/stream/ticket and GET /jobs/:id/stream (run.job.stream), GET /admin/jobs (run.job.admin)",
+    "the project and the requester come from the token (claims.project_id, claims.sub), never from the body; another project's job is 404 run.job_not_found, never 403",
+    "idempotent submit: the same Idempotency-Key (or body.idempotency_key) from the same project with the same body answers the first job (200, created false); with a different body it is 409 run.idempotency.conflict",
+    "every request body and query is validated against its released contract (run.job-create-request@1, run.job-list-query@1) and every answer against run.job-read-result@1, run.job-create-result@1, run.job-list-result@1, run.job-stream-ticket-result@1",
+    "limits bounded by the project's caps (RUN_LIMITS_*, 422 run.limits.exceeded) and args over 512 KiB refused 413 run.args_too_large, never silently lowered; requirements defaults to the contract's platform.workload-requirements@1 default (run.<class>, mobility job, latency_class background, objective balanced)",
+    "the run.job.queued|started|succeeded|failed|cancelled|expired events written in the same transaction as the state change, the outbox row keyed run:<job id>:<state> (a replay is one row) with a contract-valid evt_ document id on the published envelope, relayed from run_events_outbox by the openvibe-sdk outbox",
+    "the job stream: a two-minute single-use RS256 stream ticket (audience openvibe.run, typ run-stream, its own key — never Network's) opens text/event-stream of run.job-stream-event@1, replayed from the last 1 MiB with monotonic seq as the SSE id and Last-Event-ID resume",
+    "keyset paging on (created_at, id) with next_cursor null on the last page; run.job.admin lists any project's jobs (project_id in the query) and reads and cancels any job",
+    "run_jobs (migrations/0001_jobs.sql) holds every job, its state, placement, timings, exit, result and the metered wall clock; jobs stay queued until the dispatcher bridge to Bot exists (plan T14 step 6, server/dispatch/index.js — a no-op seam today)",
+    "Run holds no Billing token at all: Bot owns the node link and the per-second metering (plan T14 L1)",
+    "truthful readiness (GET /api/ready: db required; valkey, Network JWKS, Events and Bot reported, never claimed) and the loopback-only /metrics gauges (jobs queued, active, ended, outbox backlog, streams)"
+  ],
+  "updated": "2026-10-07"
+}

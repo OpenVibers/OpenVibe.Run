@@ -1,0 +1,33 @@
+[Unit]
+Description=OpenVibe.Run — the job service (jobs, placement, streaming; plan T14, ADR-034)
+# Network (sign-in, JWKS, OAuth) should be up first, and Run's own PostgreSQL (pooled runtime role plus
+# the direct owner role for migrations) and Valkey (state shared between processes) are required to
+# serve; the events relay waits in the outbox and the dispatcher bridge to Bot (plan T14 step 6) is a
+# no-op until it exists. Run degrades honestly without any of them: /api/ready says which (STATUS).
+After=network.target postgresql.service pgbouncer.service valkey-server.service
+Wants=openvibe-network.service postgresql.service pgbouncer.service valkey-server.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/openvibe.run
+EnvironmentFile=/etc/openvibe/run.env
+Environment=NODE_ENV=production
+Environment=PORT=4920
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env node /opt/openvibe.run/server/index.js
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Run's own database is PostgreSQL on the host's data role; the code tree stays read-only. The stream
+# ticket key is read from RUN_STREAM_PRIVATE_KEY or RUN_STREAM_KEY_FILE (default
+# /opt/openvibe.run/data/keys/run-stream.pem), never from the code tree.
+
+[Install]
+WantedBy=multi-user.target
