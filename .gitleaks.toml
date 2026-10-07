@@ -1,0 +1,9 @@
+# gitleaks configuration, used by the shared security workflow
+# (OpenVibers/OpenVibe.Shared/.github/workflows/security.yml). The default rules stay on; every
+# allowlist below is one proven false positive, matched on path AND value so nothing else is hidden.
+#
+# Run stores no credential of its own: a stream ticket is signed at request time with the key at
+# RUN_STREAM_PRIVATE_KEY / RUN_STREAM_KEY_FILE (.env.example carries names only) and is never written
+# to disk or to a log. Nothing here needs an allowlist yet.
+[extend]
+useDefault = true

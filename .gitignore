@@ -1,0 +1,15 @@
+node_modules/
+# A linked dependency tree is a symlink, which the pattern above (directory-only) does not match: the
+# tooling that links one shared copy into a worktree must never be committable.
+node_modules
+data/
+dist/
+.env
+.env.*
+!.env.example
+*.db
+*.db-wal
+*.db-shm
+*.log
+*.pem
+*.key
