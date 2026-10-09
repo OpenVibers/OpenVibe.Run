@@ -205,7 +205,7 @@ Not deployed yet: `openvibe.run` has no DNS, no `ovhost` inventory entry, no `ov
 | `STATUS.json` | What this repository is, what it does today and where it runs |
 
 <!-- versions:start -->
-- openvibe-contracts: v0.112.0
+- openvibe-contracts: v0.122.1
 - openvibe-sdk: v0.35.0
 - openvibe-shared: v2.17.0
 <!-- versions:end -->
