@@ -9,7 +9,7 @@
   "domain": "openvibe.run",
   "contracts": "openvibe-contracts v0.112.0",
   "sdk": "openvibe-sdk v0.35.0",
-  "shared": "openvibe-shared v2.15.0",
+  "shared": "openvibe-shared v2.17.0",
   "packages": [
     "openvibe-contracts v0.106.0",
     "openvibe-sdk v0.34.0",
@@ -50,5 +50,5 @@
     "Run holds no Billing token at all: Bot owns the node link and the per-second metering (plan T14 L1)",
     "truthful readiness (GET /api/ready: db required; valkey, Network JWKS, Events, Bot reachability and the poller's own status reported, never claimed) and the loopback-only /metrics gauges (jobs queued, active, ended, outbox backlog, streams)"
   ],
-  "updated": "2026-10-08"
+  "updated": "2026-10-09"
 }
