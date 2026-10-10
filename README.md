@@ -207,7 +207,7 @@ until Run has a product surface; the vhost below is installed then.
 | `STATUS.json` | What this repository is, what it does today and where it runs |
 
 <!-- versions:start -->
-- openvibe-contracts: v0.127.0
+- openvibe-contracts: v0.129.0
 - openvibe-sdk: v0.38.0
 - openvibe-shared: v3.0.0
 <!-- versions:end -->
