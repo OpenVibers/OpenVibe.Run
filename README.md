@@ -83,7 +83,7 @@ placed from the Fabric's offers and actually runs — the poller in `server/jobs
   (`bot.job.dispatch`, audience `openvibe.bot`, minted from `OV_OAUTH_CLIENT_ID`/`OV_OAUTH_CLIENT_SECRET` against
   `OV_NETWORK_INTERNAL_URL` and cached until 60 s before expiry) and mirrors its answer. Unset the client secret and
   the bridge is off: `/api/ready` skips the `bot` check and every job stays `queued`.
-- `openvibe-contracts` v0.106.0, `openvibe-sdk` v0.35.0 and `openvibe-shared` v2.20.0 (package.json).
+- `openvibe-contracts` v0.106.0, `openvibe-sdk` v0.35.0 and `openvibe-shared` v2.20.3 (package.json).
 
 ## Capabilities and routes
 
@@ -207,5 +207,5 @@ Not deployed yet: `openvibe.run` has no DNS, no `ovhost` inventory entry, no `ov
 <!-- versions:start -->
 - openvibe-contracts: v0.126.0
 - openvibe-sdk: v0.35.0
-- openvibe-shared: v2.20.0
+- openvibe-shared: v2.20.3
 <!-- versions:end -->
