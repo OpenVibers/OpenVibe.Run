@@ -31,8 +31,8 @@
     "run.job.cancelled",
     "run.job.expired"
   ],
-  "deployed": false,
-  "deployment": "Not deployed: openvibe.run has no DNS, no ovhost inventory entry, no ov_run database and no /etc/openvibe/run.env yet. The release is deploy/ (nginx vhost deploy/nginx/openvibe.run.conf, unit deploy/systemd/openvibe-run.service, WorkingDirectory /opt/openvibe.run, EnvironmentFile /etc/openvibe/run.env, PORT 4920). The vhost proxies /api/health, /api/ready and /release.json and the job API, takes the client address from $remote_addr only (never appending X-Forwarded-For), and refuses /internal/ and /metrics at the edge; the app refuses a proxied /metrics caller itself.",
+  "deployed": true,
+  "deployment": "openvibe-ovh: unit openvibe-run.service on 127.0.0.1:4920 since 2026-10-07 (release layout /opt/openvibe.run, env /etc/openvibe/run.env, database ov_run), deployed with `sudo ovhost deploy run`. The job API is reached by first-party callers on loopback; jobs are placed on people's own Bot nodes through Bot's internal jobs API (bot.job.dispatch). openvibe.run itself is parked (a 302 to openvibe.network) until Run has a product surface; the vhost in deploy/nginx/openvibe.run.conf is installed then. Its rules stay: /api/health, /api/ready, /release.json and the job API proxied, the client address from $remote_addr only, /internal/ and /metrics refused at the edge.",
   "features": [
     "the job API (/api/v1, one capability per route): POST /jobs (run.job.submit), GET /jobs/:id (run.job.read), GET /jobs/ (run.job.list), POST /jobs/:id/cancel (run.job.cancel), POST /jobs/:id/stream/ticket and GET /jobs/:id/stream (run.job.stream), GET /admin/jobs (run.job.admin)",
     "the project and the requester come from the token (claims.project_id, claims.sub), never from the body; another project's job is 404 run.job_not_found, never 403",

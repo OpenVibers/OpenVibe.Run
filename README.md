@@ -184,8 +184,10 @@ rather than through a fetch stub.
 
 ## Deploy
 
-Not deployed yet: `openvibe.run` has no DNS, no `ovhost` inventory entry, no `ov_run` database and no
-`/etc/openvibe/run.env`. The release is here ready for them:
+On openvibe-ovh since 2026-10-07: unit `openvibe-run` on loopback `:4920`, release layout under `/opt/openvibe.run`,
+env `/etc/openvibe/run.env`, database `ov_run`; deploy with `sudo ovhost deploy run`. First-party callers reach the job
+API on loopback, and jobs are placed on people's own Bot nodes. `openvibe.run` is parked (a 302 to openvibe.network)
+until Run has a product surface; the vhost below is installed then.
 
 - `deploy/nginx/openvibe.run.conf` — the vhost (TLS, www → apex, rate limits, client IP from `$remote_addr` only,
   `/internal/` and `/metrics` never proxied).
