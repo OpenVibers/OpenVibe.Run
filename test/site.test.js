@@ -1,0 +1,43 @@
+'use strict';
+/**
+ * The public site of openvibe.run: the front page in the OpenVibe Frame (its own CSP, cached briefly), the legal
+ * pages, robots.txt, the sitemap, the icon and the manifest; the API's 404 stays an RFC 9457 problem.
+ */
+const assert = require('assert');
+const { boot, check, done } = require('./helpers/app');
+
+(async () => {
+    const t = await boot();
+    try {
+        await check('GET / is the front page in the Frame, with its CSP, and says only what works', async () => {
+            const r = await t.call('GET', '/', { token: null, headers: { Accept: 'text/html' } });
+            assert.strictEqual(r.status, 200);
+            assert.match(r.headers.get('content-type'), /text\/html/);
+            assert.match(r.text, /<title>OpenVibe\.Run: run a job on a node that can/);
+            assert.match(r.text, /id="navbar-mount"/);
+            assert.match(r.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+            assert.match(r.headers.get('cache-control'), /max-age=300/);
+            assert.ok(r.text.includes('POST /api/v1/jobs/:id/stream/ticket'), 'the stream ticket route as the API names it');
+            assert.ok(r.text.includes('&quot;artifact&quot;') || r.text.includes('"artifact"'), 'the example names an artifact, as the job contract requires');
+            assert.ok(!/coming soon|placeholder/i.test(r.text), 'no placeholder copy');
+        });
+        await check('the legal pages, robots.txt, the sitemap, the icon and the manifest', async () => {
+            for (const p of ['/terms', '/privacy', '/dmca']) assert.strictEqual((await t.call('GET', p, { token: null })).status, 200, p);
+            const robots = await t.call('GET', '/robots.txt', { token: null });
+            assert.match(robots.text, /Disallow: \/api\//);
+            assert.match(robots.text, /Sitemap: .*\/sitemap\.xml/);
+            assert.match((await t.call('GET', '/sitemap.xml', { token: null })).text, /<loc>[^<]*\/terms<\/loc>/);
+            assert.match((await t.call('GET', '/favicon.ico', { token: null })).headers.get('content-type'), /image\/svg\+xml/);
+            const manifest = JSON.parse((await t.call('GET', '/manifest.webmanifest', { token: null })).text);
+            assert.strictEqual(manifest.name, 'OpenVibe.Run');
+        });
+        await check('an unknown API path is still a problem+json 404', async () => {
+            const r = await t.call('GET', '/api/v1/nothing-here', { token: null });
+            assert.strictEqual(r.status, 404);
+            assert.match(r.headers.get('content-type'), /problem\+json/);
+        });
+    } finally {
+        await t.close();
+    }
+    done();
+})();

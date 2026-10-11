@@ -94,6 +94,22 @@ function createApp(opts = {}) {
         apiAuth.middleware,
         v1Router({ config, db, apiAuth, stream, tickets, events, dispatch, now, log }));
 
+    // ── The public site (openvibe.run): the front page, the legal pages and the Frame's shared assets. ──
+    const home = require('./web/home');
+    const appIcon = require('openvibe-shared/app-icon');
+    app.use('/shared', require('openvibe-shared/serve').handler());
+    app.get('/', (req, res) => {
+        res.setHeader('Content-Security-Policy', home.HOME_CSP);
+        res.setHeader('Cache-Control', 'public, max-age=300');
+        res.type('html').send(home.renderHome({ config }));
+    });
+    { const legal = require('openvibe-shared/legal');
+      app.get(legal.PATHS, (req, res, next) => { res.setHeader('Content-Security-Policy', home.HOME_CSP); next(); }, legal.handler({ id: 'run', service: 'run', host: 'openvibe.run', name: home.SITE_NAME, profile: 'hosting' })); }
+    app.get('/robots.txt', (req, res) => res.type('text/plain').send(['User-agent: *', 'Allow: /$', 'Disallow: /api/', 'Disallow: /internal/', `Sitemap: ${config.baseUrl}/sitemap.xml`, ''].join('\n')));
+    app.get('/sitemap.xml', (req, res) => res.type('application/xml').send(require('openvibe-shared/seo').sitemapXml(['/', '/terms', '/privacy', '/dmca'].map((p) => ({ loc: `${config.baseUrl}${p}` })))));
+    app.get('/favicon.ico', (req, res) => res.type('image/svg+xml').set('Cache-Control', 'public, max-age=86400').send(appIcon.favicon({ site: 'run' })));
+    app.get('/manifest.webmanifest', (req, res) => res.type('application/manifest+json').send(JSON.stringify(appIcon.manifest({ site: 'run', name: home.SITE_NAME, shortName: 'Run', description: home.DESCRIPTION, startUrl: '/' }))));
+
     app.use((req, res) => {
         if (req.path.startsWith('/api/') || req.path.startsWith('/internal/')) return http.sendProblem(res, 404, 'not_found', { ctx: req.ov });
         return res.status(404).type('text/plain').send('Not found\n');
