@@ -91,7 +91,7 @@ function body() {
         ],
     }) + `<section class="sc-sec" id="api"><h2>The API</h2>
 <p class="sc-lede">Jobs are created with a project token from ${'<a href="https://openvibe.services">OpenVibe.Services</a>'} (capability ${code('run.job.submit')}; reading, listing, cancelling and streaming take ${code('run.job.read')}, ${code('run.job.list')}, ${code('run.job.cancel')} and ${code('run.job.stream')}). A job names its runtime class, a pre-registered artifact (a name and one exact version), its input and its limits (wall clock, CPU time, memory):</p>
-<pre class="sc-code">${SUBMIT_EXAMPLE.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</pre>
+</section>${showcase.code({ title: 'Submit a job', samples: [{ label: 'curl', lang: 'bash', code: SUBMIT_EXAMPLE }] })}<section class="sc-sec" aria-label="Job routes">
 <ul class="facts">
 <li>${code('GET /api/v1/jobs/:id')}: state, node, timings, exit and metered seconds.</li>
 <li>${code('GET /api/v1/jobs')}: the project's jobs, newest first.</li>
