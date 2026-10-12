@@ -20,6 +20,12 @@ const { boot, check, done } = require('./helpers/app');
             assert.ok(r.text.includes('POST /api/v1/jobs/:id/stream/ticket'), 'the stream ticket route as the API names it');
             assert.ok(r.text.includes('&quot;artifact&quot;') || r.text.includes('"artifact"'), 'the example names an artifact, as the job contract requires');
             assert.ok(!/coming soon|placeholder/i.test(r.text), 'no placeholder copy');
+            // The showcase stylesheet is the pinned copy under /shared, content-addressed, and it answers.
+            const css = /<link rel="stylesheet" href="(\/shared\/showcase\.css\?v=[0-9a-f]{12})">/.exec(r.text);
+            assert.ok(css, 'showcase.css is linked from /shared');
+            const sheet = await t.call('GET', css[1], { token: null });
+            assert.strictEqual(sheet.status, 200);
+            assert.match(sheet.headers.get('content-type'), /text\/css/);
         });
         await check('the legal pages, robots.txt, the sitemap, the icon and the manifest', async () => {
             for (const p of ['/terms', '/privacy', '/dmca']) assert.strictEqual((await t.call('GET', p, { token: null })).status, 200, p);

@@ -12,6 +12,7 @@
 const shell = require('openvibe-shared/shell');
 const showcase = require('openvibe-shared/showcase');
 const appIcon = require('openvibe-shared/app-icon');
+const ovServe = require('openvibe-shared/serve');
 
 const SITE_NAME = 'OpenVibe.Run';
 const NETWORK_URL = 'https://openvibe.network';
@@ -55,7 +56,7 @@ function renderHome({ config }) {
         canonical: `${config.baseUrl}/`, robots: 'index, follow',
         navbar: nav, footer: { service: 'run', variant: 'full', mount: '#ov-footer', brandName: SITE_NAME }, home: '/',
         navLinks: nav.links,
-        head: [appIcon.headTags({ site: 'run' }), '<link rel="manifest" href="/manifest.webmanifest">', `<link rel="stylesheet" href="${showcase.STYLESHEET}">`].join('\n'),
+        head: [appIcon.headTags({ site: 'run' }), '<link rel="manifest" href="/manifest.webmanifest">', `<link rel="stylesheet" href="${ovServe.url(showcase.STYLESHEET)}">`].join('\n'),
         body: `<div id="navbar-mount"></div>\n<main id="main">${body()}</main>`,
     });
 }
