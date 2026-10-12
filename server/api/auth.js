@@ -13,11 +13,20 @@
  *
  * The project a job belongs to comes from the token's own project_id claim (a developer app or agent
  * token names one), never from the request body or a query: the requester and the billed project are
- * the token's, always.
+ * the token's, always — with one exception, project delegation (ADR-003 amendment 2026-10-12): a
+ * first-party service (svc:) acting for a person (X-OV-Subject: usr_…) may name a project with
+ * X-OV-Project once Network confirms the person is an admin or owner of it. Such a principal is
+ *
+ *   { kind: 'service', sub: 'svc:watch', ..., project_id: <X-OV-Project>, delegated: { subject: 'usr_…', via: 'service:watch' } }
+ *
+ * The person is the requester and the service is recorded as via; it may submit a job and read the jobs it
+ * submitted for that person, and nothing else (403 project.not_delegated on list, cancel and stream). An
+ * app, mod or agent token, or a service without X-OV-Subject, naming a project is 403 project.not_delegated.
  */
 const { serviceAuth, capabilities, http, ids } = require('openvibe-contracts');
 
 const PRINCIPAL_SUB = /^(svc|app|mod|agent):/;
+const USER_SUBJECT = /^usr_[0-9A-HJKMNP-TV-Z]{26}$/;
 const PROJECT_RE = /^prj_[0-9A-HJKMNP-TV-Z]{26}$/;
 const ANON = Object.freeze({ kind: 'anonymous' });
 
@@ -51,8 +60,9 @@ function verifyService(token, { publicKey, issuer, audience }) {
     return { ok: true, claims: r.claims };
 }
 
-/** The project a principal acts for: its token's project_id claim, or null (no project named). */
+/** The project a principal acts for: its token's project_id claim (or its delegated project), or null (no project named). */
 function projectOf(principal) {
+    if (principal && principal.delegated) return PROJECT_RE.test(String(principal.project_id)) ? principal.project_id : null;
     const id = principal && principal.claims && principal.claims.project_id;
     return typeof id === 'string' && PROJECT_RE.test(id) ? id : null;
 }
@@ -65,13 +75,44 @@ function projectOf(principal) {
 function requesterOf(principal) {
     if (!principal) return null;
     if (principal.kind === 'user') return { type: 'user', id: principal.subject };
+    if (principal.delegated) return { type: 'user', id: principal.delegated.subject };   // the person; the service is via
     if (principal.kind !== 'service') return null;
     const sub = String((principal.claims && principal.claims.sub) || principal.sub || '');
     if (sub.startsWith('svc:')) return { type: 'service', id: sub.slice(4) };
     return ids.parseSubject(sub);
 }
 
-function createApiAuth({ config, keys, userAuth }) {
+/** The service a delegated principal acts through, as a subject-ref string ('service:watch'), or null. */
+const viaOf = (principal) => (principal && principal.delegated ? principal.delegated.via : null);
+
+function createApiAuth({ config, keys, userAuth, membership = null, log = console }) {
+    const notDelegated = (detail) => ({ error: [403, 'project.not_delegated', detail] });
+
+    /**
+     * X-OV-Project on a verified token: only a first-party service naming the person may use it, and only for a
+     * project Network says the person is an admin or owner of (not archived). The answer never says which check
+     * failed, so it never tells a caller that a project exists.
+     */
+    async function delegate(req, claims) {
+        const project = String(req.get('X-OV-Project') || '').trim();
+        const subject = String(req.get('X-OV-Subject') || '').trim();
+        const sub = String(claims.sub || '');
+        const refuse = notDelegated('a project is named only by a first-party service acting for a person who is an admin or owner of it (ADR-003 amendment 2026-10-12)');
+        if (!sub.startsWith('svc:') || claims.project_id || !USER_SUBJECT.test(subject) || !PROJECT_RE.test(project)) return refuse;
+        if (!membership) return { error: [503, 'project.check_unavailable', 'Run cannot check project memberships here'] };
+        let r;
+        try { r = await membership.allows(project, subject); }
+        catch (e) {
+            log.warn(`[Run] project membership check failed: ${e.message}`);
+            return { error: [503, 'project.check_unavailable', 'Network could not confirm the project membership just now; try again'] };
+        }
+        if (!r.ok) return refuse;
+        return { principal: {
+            kind: 'service', sub, cap: claims.cap || [], claims, project_id: project, jti: claims.jti,
+            delegated: { subject, via: `service:${sub.slice(4)}` },
+        } };
+    }
+
     async function resolve(req) {
         const header = String(req.headers.authorization || '');
         if (!header.startsWith('Bearer ')) return { principal: ANON };
@@ -82,10 +123,12 @@ function createApiAuth({ config, keys, userAuth }) {
         if (payload && typeof payload.sub === 'string' && PRINCIPAL_SUB.test(payload.sub)) {
             const r = verifyService(token, { publicKey, issuer: config.network.issuer, audience: config.audience });
             if (!r.ok) return { error: [401, r.code, r.reason] };
+            if (req.get('X-OV-Project') != null) return delegate(req, r.claims);
             return { principal: { kind: 'service', sub: r.claims.sub, cap: r.claims.cap || [], claims: r.claims, project_id: projectOf({ claims: r.claims }), jti: r.claims.jti } };
         }
         const claims = await userAuth.verify(token);
         if (!claims) return { error: [401, 'token.invalid', 'the user token is invalid or expired'] };
+        if (req.get('X-OV-Project') != null) return notDelegated('a person\'s own token never names a project here');
         const p = userPrincipal(claims);
         if (!p) return { error: [403, 'identity.no_subject', 'this account has no canonical subject yet; sign in again'] };
         return { principal: p };
@@ -130,7 +173,13 @@ function createApiAuth({ config, keys, userAuth }) {
      * when the token names no project (a first-party service token without the project_id claim, or a user
      * token): jobs belong to a project, and the billed project is never taken from a request body.
      */
-    function requireProject(req) {
+    function requireProject(req, { delegated = false } = {}) {
+        if (req.principal && req.principal.delegated && !delegated) {
+            const err = new Error('a delegated call submits jobs and reads the ones it submitted; listing, cancelling and streaming need a token that names the project');
+            err.status = 403;
+            err.code = 'project.not_delegated';
+            throw err;
+        }
         const project = projectOf(req.principal);
         const requester = requesterOf(req.principal);
         if (!project || !requester) {
@@ -139,10 +188,10 @@ function createApiAuth({ config, keys, userAuth }) {
             err.code = 'run.project_required';
             throw err;
         }
-        return { project, requester: ids.formatSubject(requester) };
+        return { project, requester: ids.formatSubject(requester), via: viaOf(req.principal) };
     }
 
-    return { middleware, resolve, granted, requireCapability, requireProject, projectOf, requesterOf };
+    return { middleware, resolve, granted, requireCapability, requireProject, projectOf, requesterOf, viaOf };
 }
 
-module.exports = { createApiAuth, userPrincipal, verifyService, decodePayload, projectOf, requesterOf, CAPABILITIES, PRINCIPAL_SUB, PROJECT_RE };
+module.exports = { createApiAuth, userPrincipal, verifyService, decodePayload, projectOf, requesterOf, viaOf, CAPABILITIES, PRINCIPAL_SUB, PROJECT_RE };
