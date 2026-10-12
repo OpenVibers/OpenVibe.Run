@@ -47,6 +47,12 @@ placed from the Fabric's offers and actually runs — the poller in `server/jobs
   (`run_jobs`, `migrations/0001_jobs.sql`): state, placement, timings, exit, result and the metered wall clock.
 - The project scope: a job's `project_id` and `requester` come from the caller's Network token
   (`claims.project_id`, `claims.sub`) and never from a request body; another project's job is `404`, never `403`.
+- Project delegation (ADR-003 amendment 2026-10-12): a first-party service acting for a person (`X-OV-Subject`) may
+  name a project with `X-OV-Project`. Run asks Network whether the person is an admin or owner of the unarchived
+  project (`network.project.member.read`, a yes cached 60 s), then the person is the requester and the service is
+  stored as `via` (`migrations/0002_job_via.sql`). The service submits and reads only the jobs it started for that
+  person; list, cancel and stream are `403 project.not_delegated`, and so is any other caller naming a project. Network
+  unreachable is `503 project.check_unavailable`. Watch's `run-job` action is the first user.
 - The `job_<ULID>` id (minted here, passed unchanged to Bot as `platform.job@1` `id`, so every metering reading of
   the job is `run:<id>:<n>`).
 - Idempotent submit: one row per `(project_id, idempotency_key)`, a repeat answering the first job, a different body
@@ -80,7 +86,8 @@ placed from the Fabric's offers and actually runs — the poller in `server/jobs
 - PostgreSQL 18: `run_jobs` and the `run_events_outbox`; `migrations/` applies on boot.
 - Valkey (`VALKEY_URL`, optional): shared state between processes; unset, nothing is shared.
 - OpenVibe.Network: the RS256 signing key (JWKS) every token is verified against; the offers Run places from
-  (`GET /api/v1/offers`, public); Run's client `run` mints the events relay's service token and its Bot token.
+  (`GET /api/v1/offers`, public); Run's client `run` mints the events relay's service token, its Bot token and the
+  token for project memberships (`GET /internal/projects/:project/members/:subject`, project delegation).
 - OpenVibe.Events: `run.job.*` events go to `events.event.publish`; unset, they wait in `run_events_outbox`.
 - OpenVibe.Bot (`RUN_BOT_URL`, `RUN_POLL_MS`): the node link and the meter. Run sends each job to it
   (`bot.job.dispatch`, audience `openvibe.bot`, minted from `OV_OAUTH_CLIENT_ID`/`OV_OAUTH_CLIENT_SECRET` against

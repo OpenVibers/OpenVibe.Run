@@ -5,7 +5,7 @@
  *
  * The schema is migrations/NNNN_*.sql, applied at boot by migrate() on the owner's direct connection
  * (DATABASE_DIRECT_URL); the service then serves on the pooled runtime role (DATABASE_URL, PgBouncer in
- * transaction mode). Run is new: migrations/0001_jobs.sql is written as the final schema, no window.
+ * transaction mode). 0001_jobs.sql is the jobs schema; 0002 adds the nullable via column (project delegation).
  *
  *   run_jobs            one row per job (plan T14 R1; run.job-create-request@1)
  *   run_events_outbox   the openvibe-sdk transactional outbox (run.job.* events)

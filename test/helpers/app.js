@@ -40,7 +40,23 @@ async function startNetwork() {
     const issuer = 'http://network.test';
     const tokenRequests = { n: 0, audiences: [], scopes: [] };
     const offers = [];   // what the registry publishes; a test replaces its contents (t.setOffers)
+    // Project memberships Network states (GET /internal/projects/:project/members/:subject, project delegation):
+    // `${project} ${subject}` → { role, archived }; memberReads counts the reads, memberFail makes them answer 500.
+    const members = new Map();
+    const memberState = { reads: 0, fail: false, lastAuth: null };
     const server = http.createServer((req, res) => {
+        const member = /^\/internal\/projects\/([^/]+)\/members\/([^/?]+)$/.exec(req.url);
+        if (req.method === 'GET' && member) {
+            memberState.reads++;
+            memberState.lastAuth = req.headers.authorization || null;
+            if (memberState.fail) { res.writeHead(500, { 'Content-Type': 'application/json' }); return res.end('{}'); }
+            const project = decodeURIComponent(member[1]);
+            const subject = decodeURIComponent(member[2]);
+            const m = members.get(`${project} ${subject}`);
+            if (!m) { res.writeHead(404, { 'Content-Type': 'application/problem+json' }); return res.end(JSON.stringify({ code: 'project.member_not_found' })); }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ project_id: project, subject, role: m.role, archived: !!m.archived, added_at: null }));
+        }
         if (req.url === '/api/.well-known/jwks') {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             return res.end(JSON.stringify({ keys: [{ kty: 'RSA', kid: 'n1', ...publicKey.export({ format: 'jwk' }) }], public_key: publicPem }));
@@ -84,7 +100,7 @@ async function startNetwork() {
     });
     const url = await listen(server);
     return {
-        url, issuer, publicPem, privatePem, tokenRequests, offers,
+        url, issuer, publicPem, privatePem, tokenRequests, offers, members, memberState,
         /** Publish exactly these platform.resource-offer@1 documents (the array keeps its identity). */
         setOffers(list) { offers.splice(0, offers.length, ...list); },
         close: () => new Promise((r) => server.close(r)),

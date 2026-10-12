@@ -16,7 +16,11 @@
  * | GET  /admin/jobs                  | run.job.admin    | run.job-list-query@1 (with project_id) → run.job-list-result@1 |
  *
  * The project and the requester always come from the token (claims.project_id, claims.sub), NEVER from the
- * body: a body field is never read for either. run.job.admin additionally reads and cancels any project's
+ * body: a body field is never read for either. The one exception is project delegation (ADR-003 amendment
+ * 2026-10-12, server/api/auth.js): a first-party service acting for a person names the project in
+ * X-OV-Project once Network confirms the person is an admin or owner of it; the person is the requester and
+ * the service is stored as via. Such a caller submits and reads the jobs it submitted for that person (any
+ * other job is the same 404); list, cancel and stream are 403 project.not_delegated. run.job.admin additionally reads and cancels any project's
  * job (the manifest says so) and is the only way to pass project_id to a list. Another project's job is
  * always 404 run.job_not_found, never 403: the answer must not say whether the id exists.
  *
@@ -125,23 +129,25 @@ function v1Router({ config, db, apiAuth, stream, tickets, events, dispatch, now 
      * One job, scoped to the token's project — or to any project with run.job.admin. Null when the id is
      * not a job id, does not exist, or belongs to another project: all three are the same 404 to the caller.
      */
-    async function getJob(req, id) {
+    async function getJob(req, id, { delegated = false } = {}) {
         if (!isJobId(id)) return null;
-        if (admin(req)) return store.get(db, id, null);
-        return store.get(db, id, apiAuth.requireProject(req).project);
+        if (admin(req) && !req.principal.delegated) return store.get(db, id, null);
+        const scope = apiAuth.requireProject(req, { delegated });
+        if (scope.via) return store.getOwn(db, id, { projectId: scope.project, requester: scope.requester, via: scope.via });
+        return store.get(db, id, scope.project);
     }
 
     r.use((req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
 
     // ── POST /jobs — run.job.submit ────────────────────────────────────────────
     r.post('/jobs', guard('run.job.submit'), wrap(async (req, res) => {
-        const { project: projectId, requester } = apiAuth.requireProject(req);
+        const { project: projectId, requester, via } = apiAuth.requireProject(req, { delegated: true });
         const body = validCreate(req.body);
         checkLimits(body, config.limits);
         const key = idempotencyKey(req, body);
         const at = now();
         const out = await db.tx(async (t) => {
-            const made = await store.mint(t, body, { projectId, requester, idempotencyKey: key, now: at });
+            const made = await store.mint(t, body, { projectId, requester, via, idempotencyKey: key, now: at });
             // The queued event is written in the same transaction as the row (never for an idempotent repeat:
             // the row key run:<job id>:queued is already taken, and that replay is the row that exists).
             if (made.created) await events.queued(t, made.row, { traceparent: req.ov && req.ov.traceparent });
@@ -165,7 +171,7 @@ function v1Router({ config, db, apiAuth, stream, tickets, events, dispatch, now 
 
     // ── GET /jobs/:id — run.job.read ───────────────────────────────────────────
     r.get('/jobs/:id', guard('run.job.read'), wrap(async (req, res) => {
-        const row = await getJob(req, req.params.id);
+        const row = await getJob(req, req.params.id, { delegated: true });
         if (!row) fail(404, 'run.job_not_found', 'no such job');
         res.json(store.readResult(row));
     }));
@@ -220,6 +226,7 @@ function v1Router({ config, db, apiAuth, stream, tickets, events, dispatch, now 
             // door is a query string a middleware cannot see.
             const p = req.principal;
             if (p.kind !== 'service') fail(403, 'capability.denied', 'run.job.stream is granted to service principals only');
+            if (p.delegated) fail(403, 'project.not_delegated', 'a delegated call does not stream; a token that names the project does');
             const decision = contracts.capabilities.check(p.claims, 'run.job.stream');
             if (!decision.allowed) fail(403, decision.code || 'capability.denied', decision.reason);
             const project = apiAuth.projectOf(p);

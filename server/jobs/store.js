@@ -74,7 +74,7 @@ function recordOf(row) {
  * inputs [], egress none, requirements the contract's default, ttl_ms limits.wall_ms + 600000), the id
  * minted by Run (job_<ULID>; Run owns run.job.* and passes it to Bot unchanged).
  */
-function normalize(body, { projectId, requester, idempotencyKey, now }) {
+function normalize(body, { projectId, requester, via = null, idempotencyKey, now }) {
     const job = {
         id: newJobId(now),
         class: body.class,
@@ -93,6 +93,7 @@ function normalize(body, { projectId, requester, idempotencyKey, now }) {
         id: job.id,
         project_id: projectId,
         requester,
+        via,
         idempotency_key: idempotencyKey,
         class: job.class,
         job,
@@ -108,11 +109,11 @@ function normalize(body, { projectId, requester, idempotencyKey, now }) {
 /** Insert a new job. The same (project_id, idempotency_key) already there returns that row, created:false. */
 async function put(db, row) {
     const inserted = await db.maybe(
-        `INSERT INTO run_jobs (id, project_id, requester, idempotency_key, class, job, ttl_ms, state, created_at, updated_at, wall_ms, usage_read)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        `INSERT INTO run_jobs (id, project_id, requester, via, idempotency_key, class, job, ttl_ms, state, created_at, updated_at, wall_ms, usage_read)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          ON CONFLICT (project_id, idempotency_key) DO NOTHING
          RETURNING *`,
-        [row.id, row.project_id, row.requester, row.idempotency_key, row.class, JSON.stringify(row.job), row.ttl_ms, row.state, row.created_at, row.updated_at, row.wall_ms, row.usage_read]);
+        [row.id, row.project_id, row.requester, row.via, row.idempotency_key, row.class, JSON.stringify(row.job), row.ttl_ms, row.state, row.created_at, row.updated_at, row.wall_ms, row.usage_read]);
     if (inserted) return { row: inserted, created: true };
     const existing = await db.maybe('SELECT * FROM run_jobs WHERE project_id = $1 AND idempotency_key = $2', [row.project_id, row.idempotency_key]);
     if (!existing) throw new Error('run_jobs: the insert conflicted but no row is visible');   // only a crashed transaction does this
@@ -125,15 +126,22 @@ async function put(db, row) {
  * first job (created:false); with a different body it is 409 run.idempotency.conflict.
  *
  * The unique index is permanent: a key is spent for its project for good, where run.job-create-request@1
- * promises the first-job answer "within 24 h". The 24 h window cannot be implemented on this table (no
- * migration may add a column or relax the index), and answering a repeat with the first job forever is the
- * safe direction — it can never run the work twice — so a key older than 24 h answers the same way rather
- * than being recycled. A caller that reuses a key for different work is refused, not silently served.
+ * promises the first-job answer "within 24 h". The 24 h window is not implemented on this table (the
+ * index is never relaxed), and answering a repeat with the first job forever is the safe direction — it
+ * can never run the work twice — so a key older than 24 h answers the same way rather than being
+ * recycled. A caller that reuses a key for different work is refused, not silently served.
+ *
+ * A delegated submit (via set: a first-party service acting for a person in the project) is answered the
+ * first job only when that job is the same person's through the same service: a key another requester spent
+ * is 409 without naming the job, so a delegated caller never learns of work it did not start.
  */
-async function mint(db, body, { projectId, requester, idempotencyKey, now }) {
-    const row = normalize(body, { projectId, requester, idempotencyKey, now });
+async function mint(db, body, { projectId, requester, via = null, idempotencyKey, now }) {
+    const row = normalize(body, { projectId, requester, via, idempotencyKey, now });
     const out = await put(db, row);
     if (out.created) return out;
+    if ((via || out.row.via) && (out.row.requester !== requester || (out.row.via || null) !== via)) {
+        fail(409, 'run.idempotency.conflict', `idempotency_key ${idempotencyKey} was already used in this project`);
+    }
     if (canonical(recordOf(out.row)) !== canonical(recordOf(row))) {
         fail(409, 'run.idempotency.conflict', `idempotency_key ${idempotencyKey} was first used by ${out.row.id} with a different body`);
     }
@@ -142,6 +150,10 @@ async function mint(db, body, { projectId, requester, idempotencyKey, now }) {
 
 /** Project-scoped get: null when the job does not exist or belongs to another project (→ 404, never 403). */
 const get = (db, id, projectId = null) => db.maybe(`SELECT * FROM run_jobs WHERE id = $1${projectId ? ' AND project_id = $2' : ''}`, projectId ? [id, projectId] : [id]);
+
+/** A delegated caller's get: the job only if it is this project's, this person's, through this service (else null → 404). */
+const getOwn = (db, id, { projectId, requester, via }) => db.maybe(
+    'SELECT * FROM run_jobs WHERE id = $1 AND project_id = $2 AND requester = $3 AND via = $4', [id, projectId, requester, via]);
 
 /** One page, newest first, keyset cursor (created_at, id) → { rows, nextCursor }. */
 async function page(db, where, values, limit, cursor) {
@@ -326,7 +338,7 @@ function readResult(row) {
 
 module.exports = {
     // The store surface the API and the dispatcher bridge (plan T14 step 6) use.
-    put, mint, get, list, adminList, cancel, mirror, settle, toJob, readResult, frameOf,
+    put, mint, get, getOwn, list, adminList, cancel, mirror, settle, toJob, readResult, frameOf,
     // The poller's reads (waiting → placed → active → ended).
     waiting, active, dueTtl,
 };

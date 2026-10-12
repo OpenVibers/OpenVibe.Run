@@ -22,7 +22,7 @@ const { http } = require('openvibe-contracts');
 const { isLoopbackDirect } = require('openvibe-shared/metrics');
 const { loadConfig } = require('./config');
 const { openDb } = require('./db');
-const { createKeyProvider, createUserAuth } = require('./network');
+const { createKeyProvider, createUserAuth, createProjectMembership } = require('./network');
 const { createRunOutbox } = require('./events/outbox');
 const { createStreamTickets } = require('./jobs/ticket');
 const { createJobStream } = require('./jobs/stream');
@@ -55,7 +55,8 @@ function createApp(opts = {}) {
     // offers and the job loop that sends, mirrors and cancels. It is off without OV_OAUTH_CLIENT_SECRET —
     // Run cannot mint the Bot token — and nothing runs until server/index.js calls its start().
     const dispatch = opts.dispatch || createDispatcher({ config, db, store: require('./jobs/store'), events, stream, log, now, fetchImpl });
-    const apiAuth = createApiAuth({ config, keys, userAuth });
+    const membership = opts.membership || createProjectMembership(config, { fetchImpl, now });
+    const apiAuth = createApiAuth({ config, keys, userAuth, membership, log });
     const release = require('openvibe-shared/release').createRelease({ service: 'run', root: path.join(__dirname, '..') });
 
     const app = express();
