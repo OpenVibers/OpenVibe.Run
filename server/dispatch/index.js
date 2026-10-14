@@ -20,27 +20,41 @@
  *   sweep()      ttl_ms ran out before placement: settle expired with run.job.unplaceable (never placed) or
  *                run.job.ttl (a node may hold it), and cancel on Bot.
  *
- * `enabled` is false when Run has no Network client credentials (OV_OAUTH_CLIENT_SECRET): it cannot mint the
- * token Bot requires, so nothing is sent and every job stays queued — the same no-op the seam was before
- * step 6, now for a stated reason. Nothing starts at module load: server/index.js calls start().
+ * The managed-browser provider (plan T14 R4a, server/dispatch/browser-provider.js): with RUN_BROWSER_PROVIDER_URL
+ * and its key set, class browser jobs may be placed on a kind=provider offer named `browser-provider` and sent to
+ * the provider instead of Bot; Run meters those jobs itself (clamped to its own observed duration + 5 s) and its
+ * usage relay (server/jobs/usage.js) posts the readings to Billing. The rest of the bridge is unchanged.
+ *
+ * `enabled` is false when neither Bot nor the provider can be called: without Network client credentials
+ * (OV_OAUTH_CLIENT_SECRET) Run cannot mint the token Bot requires, and without the provider's URL and key the
+ * adapter is off, so nothing is sent and every job stays queued — the same no-op the seam was before step 6,
+ * now for a stated reason. Nothing starts at module load: server/index.js calls start().
  */
 const { createBotClient } = require('./bot');
+const { createBrowserProviderAdapter, PROVIDER: BROWSER_PROVIDER } = require('./browser-provider');
 const { createPlacement, workerCapability } = require('./placement');
 const { createPoller } = require('../jobs/poller');
+const { createUsageRelay } = require('../jobs/usage');
 
 /**
- * createDispatcher({ config, db, store, events, stream, log, now, fetchImpl, bot, placement }) → the
- * dispatcher interface. Every dependency is injectable so tests build their own Bot, offers and clock.
+ * createDispatcher({ config, db, store, events, stream, log, now, fetchImpl, bot, provider, usageRelay,
+ * placement }) → the dispatcher interface. Every dependency is injectable so tests build their own Bot,
+ * provider, offers and clock.
  */
 function createDispatcher({ config = null, db = null, store = null, events = null, stream = null, log = console,
-    now = () => Date.now(), fetchImpl = globalThis.fetch, bot = null, placement = null } = {}) {
+    now = () => Date.now(), fetchImpl = globalThis.fetch, bot = null, provider = null, usageRelay = null, placement = null } = {}) {
     const botClient = bot || createBotClient({ config, fetchImpl, now, log });
-    const placer = placement || createPlacement({ config, fetchImpl, now, log });
-    const poller = createPoller({ config, db, store, events, stream, bot: botClient, placement: placer, now, log });
-    const enabled = botClient.enabled;
-    const note = enabled
-        ? botClient.note
-        : `${botClient.note}: every job stays queued (plan T14 step 6 is built, but Run cannot call Bot)`;
+    const adapter = provider || createBrowserProviderAdapter({ config, fetchImpl, now, log });
+    const relay = usageRelay || createUsageRelay({ db, config, fetchImpl, now, log });
+    // Provider offers are placement candidates only while the adapter can be called.
+    const placer = placement || createPlacement({ config, fetchImpl, now, log, providers: adapter.enabled ? { [BROWSER_PROVIDER]: ['browser'] } : {} });
+    const poller = createPoller({ config, db, store, events, stream, bot: botClient, provider: adapter, usageRelay: relay, placement: placer, now, log });
+    const enabled = Boolean(botClient.enabled || adapter.enabled);
+    const note = botClient.enabled
+        ? (adapter.enabled ? `${botClient.note}; ${adapter.note}` : botClient.note)
+        : adapter.enabled
+            ? `${adapter.note}; ${botClient.note}: only browser jobs on the provider leave queued`
+            : `${botClient.note}: every job stays queued (plan T14 step 6 is built, but Run cannot call Bot)`;
 
     /** Send a queued job to a node. → { placed, reason }. Never throws: the poller retries. */
     async function place(row) {
@@ -67,18 +81,20 @@ function createDispatcher({ config = null, db = null, store = null, events = nul
 
     return {
         enabled, note, place, cancel, poll, sweep,
-        start: () => poller.start(),
-        stop: () => poller.stop(),
+        start: () => { relay.start(); return poller.start(); },
+        stop: () => { poller.stop(); return relay.stop(); },
         status: () => ({
             enabled, note,
             bot_url: config ? config.dispatch.botUrl : null,
             audience: config ? config.dispatch.botAudience : null,
+            browser_provider: adapter.status(),
+            usage_relay: relay.status(),
             placement: placer.status(),
             poller: poller.status(),
         }),
         now,
         // Kept so step 6's bridge has its dependencies in one place without changing the seam's signature.
-        deps: { config, db, store, events, stream, log, bot: botClient, placement: placer, poller },
+        deps: { config, db, store, events, stream, log, bot: botClient, provider: adapter, usageRelay: relay, placement: placer, poller },
     };
 }
 

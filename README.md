@@ -8,7 +8,9 @@ plan track T14.
 OpenVibe.Run accepts jobs, places each one on a node that advertises the runtime class it needs, and follows it to
 its end. A job belongs to a **project**, is billed per wall-clock second it runs, and is visible only to the token
 that project presents. Run owns the API, the project scope and the placement; OpenVibe.Bot owns the node link and the
-per-second metering, so Run holds no Billing token at all (plan T14 L1).
+per-second metering of the jobs it carries (plan T14 L1). The one exception is the external managed-browser provider
+(plan T14 R4a): Run meters its jobs itself and posts their readings with a Billing token of its own, used for nothing
+else.
 
 This repository is at plan **T14 steps 5 (R1b), 6 (R1c) and 7 (R3)**: the API is complete, and a queued job is
 placed from the Fabric's offers and actually runs — the poller in `server/jobs/poller.js` (started by
@@ -30,7 +32,7 @@ placed from the Fabric's offers and actually runs — the poller in `server/jobs
    `bot.job.dispatch`, audience `openvibe.bot`) and Bot gives it to the node over its device link. Bot's dispatch is
    idempotent by job id, so a retry after a crash or a timeout is safe.
 4. **Mirror** — every tick mirrors each `placed` or `running` job from `GET {RUN_BOT_URL}/api/v1/jobs/{id}`: state,
-   timings, exit, result and the metered wall clock (Bot is the meter; Run never posts a usage record). The state
+   timings, exit, result and the metered wall clock (Bot is the meter; Run never posts a usage record for a job Bot carries). The state
    change and its `run.job.started|succeeded|failed|cancelled|expired` event are one transaction, and the job's
    stdout is carried into its SSE stream as `output` events. A job Bot answers 404 for after Run sent it fails
    `run.job.worker_failed` after `RUN_DISPATCH_UNKNOWN_POLLS` polls — it is never mirrored forever.
@@ -79,7 +81,8 @@ placed from the Fabric's offers and actually runs — the poller in `server/jobs
 - Identity, tokens and projects (OpenVibe.Network); Run only verifies the tokens it is the audience of.
 - The artifacts a job runs and the media its inputs come from (OpenVibe.Media; Run never fetches a caller-chosen
   URL).
-- Money: Run writes no usage record and holds no Billing token.
+- Money for the jobs Bot carries: Bot writes their usage records. Run writes only the external provider's
+  (`billing.usage.record`, clamped to Run's own observed duration + 5 s).
 
 ## Depends on
 
@@ -153,8 +156,11 @@ every answer before it is sent; errors are RFC 9457 `application/problem+json`.
   request until it lands), and the job reaches `cancelled` when Bot says so. Run never answers `cancelled` for work a
   node may still be doing. Cancelling an ended job answers it as it is.
 - **Usage.** `usage.wall_ms` and `usage.seconds` are Bot's metered wall clock (Bot writes the
-  `run:<job id>:<n>` readings; Run holds no Billing token and never posts one). A running job therefore shows 0
-  until its `job_exit` carries the wall clock: Run does not estimate a number it cannot back.
+  `run:<job id>:<n>` readings; Run never posts those). A running job therefore shows 0
+  until its `job_exit` carries the wall clock: Run does not estimate a number it cannot back. A job the managed-browser
+  provider ran is metered by Run: the provider's claimed `wall_ms`, never above Run's own observed duration (its send
+  to the answer that showed the end) + 5 s — a larger claim is clamped and logged — queued as `run:<job id>:<n>`
+  readings in `run_usage_outbox` with the end state and relayed to Billing (`RUN_BILLING_URL`; unset, they wait).
 - **Placement.** The node is chosen per tick from the offers Network publishes
   (`GET {OV_NETWORK_URL}/api/v1/offers?kind=node`) by `openvibe-sdk/placement` `plan()`, on the job's own
   `requirements`; `node_id`, `provider` and `region` are recorded on Run's row. A class no node offers keeps the job

@@ -7,11 +7,11 @@
   "runtime": "node 22, express 4, PostgreSQL 18 (openvibe-sdk/db) + Valkey 9",
   "port": 4920,
   "domain": "openvibe.run",
-  "contracts": "openvibe-contracts v0.143.0",
+  "contracts": "openvibe-contracts v0.155.0",
   "sdk": "openvibe-sdk v0.44.0",
   "shared": "openvibe-shared v4.1.3",
   "packages": [
-    "openvibe-contracts v0.143.0",
+    "openvibe-contracts v0.155.0",
     "openvibe-sdk v0.44.0",
     "openvibe-shared v4.1.3"
   ],
@@ -47,8 +47,9 @@
     "ttl_ms expiry settles the job expired (run.job.ttl) and asks Bot to stop a job a node may hold",
     "the job stream also opens with a Bearer service token holding run.job.stream for the job's project, besides the two-minute ticket",
     "run_jobs (migrations/0001_jobs.sql) holds every job, its state, placement, timings, exit, result and the metered wall clock",
-    "Run holds no Billing token at all: Bot owns the node link and the per-second metering (plan T14 L1)",
+    "Bot owns the node link and the per-second metering of the jobs it carries (plan T14 L1); Run holds a Billing token of its own (billing.usage.record, audience openvibe.billing) used only for the external managed-browser provider's jobs",
+    "plan T14 R4a built, not deployed: the managed-browser provider adapter (server/dispatch/browser-provider.js; RUN_BROWSER_PROVIDER_URL / _API_KEY / _TIMEOUT_MS, off while unset) places class browser jobs on kind=provider offers named browser-provider, validates every answer against browser-provider.job-create-result@1 / job-state@1 and never adopts a malformed one; Run meters those jobs itself, the provider's claimed wall time clamped to Run's observed duration + 5 s, and relays the readings from run_usage_outbox (migrations/0003_usage_outbox.sql) to Billing (RUN_BILLING_URL; unset, they wait and the jobs still run)",
     "truthful readiness (GET /api/ready: db required; valkey, Network JWKS, Events, Bot reachability and the poller's own status reported, never claimed) and the loopback-only /metrics gauges (jobs queued, active, ended, outbox backlog, streams)"
   ],
-  "updated": "2026-10-12"
+  "updated": "2026-10-13"
 }

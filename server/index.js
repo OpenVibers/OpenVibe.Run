@@ -13,7 +13,9 @@
  * Background jobs (RUN_JOBS=off disables them): the events outbox relay and the dispatcher's poller
  * (plan T14 step 6, server/jobs/poller.js; one tick every RUN_POLL_MS), which places queued jobs on a node
  * from the Fabric offers, sends them to Bot and mirrors what Bot answers. Without OV_OAUTH_CLIENT_SECRET
- * Run cannot mint its Bot token and every job stays queued.
+ * Run cannot mint its Bot token and every job stays queued. With RUN_BROWSER_PROVIDER_URL and its key, browser
+ * jobs may go to the managed-browser provider instead (plan T14 R4a); the dispatcher also runs Run's usage relay
+ * for those jobs (RUN_BILLING_URL; unset, their readings wait in run_usage_outbox).
  */
 const { loadConfig } = require('./config');
 const { openDb, migrate } = require('./db');
@@ -45,7 +47,7 @@ async function main() {
 
     const server = app.listen(config.port, config.host, () => {
         console.log(`[Run] ${config.nodeEnv} on http://${config.host}:${config.port} → ${config.baseUrl} (store ${db.store}; valkey ${valkey ? 'on' : 'off: this process only'})`);
-        console.log(`[Run] jobs ${config.jobs.enabled ? 'on' : 'off (RUN_JOBS=off)'}; events relay ${outbox.enabled ? `→ ${config.events.url}` : 'off (run.job.* events wait in the outbox)'}; stream tickets ${ticketKey.enabled ? `on (${config.stream.keyId}${ticketKey.ephemeral ? ', ephemeral key' : ''})` : 'off (no stream key)'}; dispatcher ${dispatch.enabled ? `on → ${config.dispatch.botUrl} (poll ${config.dispatch.pollMs} ms)` : 'off: no OV_OAUTH_CLIENT_SECRET, jobs stay queued'}`);
+        console.log(`[Run] jobs ${config.jobs.enabled ? 'on' : 'off (RUN_JOBS=off)'}; events relay ${outbox.enabled ? `→ ${config.events.url}` : 'off (run.job.* events wait in the outbox)'}; stream tickets ${ticketKey.enabled ? `on (${config.stream.keyId}${ticketKey.ephemeral ? ', ephemeral key' : ''})` : 'off (no stream key)'}; dispatcher ${dispatch.enabled ? `on (poll ${config.dispatch.pollMs} ms): ${dispatch.note}` : `off: ${dispatch.note}`}; ${dispatch.status().usage_relay.note}`);
     });
     server.keepAliveTimeout = 65_000;
 
