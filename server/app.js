@@ -99,6 +99,16 @@ function createApp(opts = {}) {
     const home = require('./web/home');
     const appIcon = require('openvibe-shared/app-icon');
     app.use('/shared', require('openvibe-shared/serve').handler());
+    // IndexNow (openvibe-shared/indexnow): on only with INDEXNOW_KEY, which also mounts GET /<key>.txt. A malformed
+    // key (8–128 alphanumerics) turns it off instead of stopping the service.
+    const discovery = require('./web/discovery');
+    let indexnow = opts.indexnow;
+    if (!indexnow) {
+        const { createIndexNow } = require('openvibe-shared/indexnow');
+        try { indexnow = createIndexNow({ host: config.baseUrl, key: config.indexnow.key, fetch: fetchImpl }); }
+        catch (err) { log.warn(`[Run] IndexNow disabled: ${err.message}`); indexnow = createIndexNow({ host: config.baseUrl, key: '' }); }
+    }
+    if (indexnow.enabled) app.use(indexnow.keyFile);
     app.get('/', (req, res) => {
         res.setHeader('Content-Security-Policy', home.HOME_CSP);
         res.setHeader('Cache-Control', 'public, max-age=300');
@@ -106,6 +116,8 @@ function createApp(opts = {}) {
     });
     { const legal = require('openvibe-shared/legal');
       app.get(legal.PATHS, (req, res, next) => { res.setHeader('Content-Security-Policy', home.HOME_CSP); next(); }, legal.handler({ id: 'run', service: 'run', host: 'openvibe.run', name: home.SITE_NAME, profile: 'hosting' })); }
+    app.get('/llms.txt', (req, res) => res.type('text/plain').set('Cache-Control', 'public, max-age=3600').send(discovery.llmsTxt(config)));
+    app.get('/llms-full.txt', (req, res) => res.type('text/plain').set('Cache-Control', 'public, max-age=3600').send(discovery.llmsFull(config)));
     app.get('/robots.txt', (req, res) => res.type('text/plain').send(['User-agent: *', 'Allow: /$', 'Disallow: /api/', 'Disallow: /internal/', `Sitemap: ${config.baseUrl}/sitemap.xml`, ''].join('\n')));
     app.get('/sitemap.xml', (req, res) => res.type('application/xml').send(require('openvibe-shared/seo').sitemapXml(['/', '/terms', '/privacy', '/dmca'].map((p) => ({ loc: `${config.baseUrl}${p}` })))));
     app.get('/favicon.ico', (req, res) => res.type('image/svg+xml').set('Cache-Control', 'public, max-age=86400').send(appIcon.favicon({ site: 'run' })));
@@ -128,7 +140,7 @@ function createApp(opts = {}) {
         return res.status(500).type('text/plain').send('Something went wrong\n');
     });
 
-    Object.assign(app.locals, { config, db, valkey, keys, outbox, events, stream, tickets, dispatch, apiAuth, metrics });
+    Object.assign(app.locals, { config, db, indexnow, valkey, keys, outbox, events, stream, tickets, dispatch, apiAuth, metrics });
     return app;
 }
 
