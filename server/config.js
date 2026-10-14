@@ -5,8 +5,11 @@
  * /etc/openvibe/run.env in production). loadConfig(env) is pure so tests build their own.
  *
  * Run is the job service of the network (plan T14, ADR-034): it owns the API, the project scope and the
- * placement, on its own PostgreSQL (ADR-035). Bot owns the node link and the per-second metering, so Run
- * holds no Billing token at all — Run never moves money (plan T14 L1).
+ * placement, on its own PostgreSQL (ADR-035). Bot owns the node link and the per-second metering of the jobs it
+ * carries (plan T14 L1). The one exception is an external managed-browser provider (plan T14 R4a): it is not a
+ * paired Node and writes no usage of its own, so Run meters those jobs itself and posts their readings with a
+ * Billing token of its own (billing.usage.record, audience openvibe.billing), used for nothing else. The
+ * provider's API key lives in Run's environment only: never in an offer, a job or a log.
  */
 require('dotenv').config();
 
@@ -118,6 +121,26 @@ function loadConfig(env = process.env) {
             unknownPolls: Math.max(1, int(env.RUN_DISPATCH_UNKNOWN_POLLS, 5)),
             // Jobs one tick places and mirrors; the next tick takes the rest.
             maxPerTick: Math.max(1, int(env.RUN_DISPATCH_MAX_PER_TICK, 200)),
+        },
+
+        // The external managed-browser provider (plan T14 R4a, server/dispatch/browser-provider.js): class browser
+        // jobs placed on a kind=provider offer named `browser-provider` go to its API instead of Bot. Off while
+        // RUN_BROWSER_PROVIDER_URL or the key is unset: no provider offer is placed on, so a browser job waits.
+        browserProvider: {
+            url: trim(String(env.RUN_BROWSER_PROVIDER_URL || '').trim()),
+            apiKey: String(env.RUN_BROWSER_PROVIDER_API_KEY || '').trim(),
+            timeoutMs: Math.max(100, int(env.RUN_BROWSER_PROVIDER_TIMEOUT_MS, 8000)),
+        },
+
+        // Run's own usage relay to OpenVibe.Billing (billing.usage.record, POST <url>/api/v1/usage), for the
+        // external provider's jobs only (Bot meters its own). The token is minted from Run's Network client for
+        // audience openvibe.billing. Unset URL or no OV_OAUTH_CLIENT_SECRET: readings wait in run_usage_outbox,
+        // nothing is sent, and the jobs still run.
+        billing: {
+            url: trim(String(env.RUN_BILLING_URL || '').trim()),
+            audience: env.RUN_BILLING_AUDIENCE || 'openvibe.billing',
+            intervalMs: Math.max(100, int(env.RUN_BILLING_INTERVAL_MS, 5000)),
+            timeoutMs: Math.max(100, int(env.RUN_BILLING_TIMEOUT_MS, 8000)),
         },
     };
 }

@@ -28,6 +28,16 @@ Notable changes to OpenVibe.Run. The service is unreleased; everything below is 
   one `run.job.*` event per state change, the node's stdout as stream `output` events, and the job_cancel.
 - `GET /api/v1/jobs/:id/stream` also opens with a Bearer service token holding `run.job.stream` for the job's
   project, beside the ticket.
+- The managed-browser provider adapter (plan T14 R4a, `server/dispatch/browser-provider.js`): class `browser` jobs
+  placed on a `kind=provider` offer named `browser-provider` are sent to the provider's API
+  (`browser-provider.job-create-request@1`, the frame alone: no project, subject or requester), mirrored, cancelled
+  and expired there; every answer is validated against `job-create-result@1` / `job-state@1` and a malformed one is
+  never adopted. Configured by `RUN_BROWSER_PROVIDER_URL`, `RUN_BROWSER_PROVIDER_API_KEY` (Run's env only, never
+  logged) and `RUN_BROWSER_PROVIDER_TIMEOUT_MS` (8000); off while the URL or the key is unset.
+- Run's own metering of those jobs: the provider's claimed wall time is clamped to Run's observed duration + 5 s
+  (a larger claim is logged and never billed), queued as `platform.usage-sample@1` readings in `run_usage_outbox`
+  (`migrations/0003_usage_outbox.sql`) with the end state, and relayed to Billing (`RUN_BILLING_URL`) with a Run
+  token for audience `openvibe.billing` holding `billing.usage.record` — used for nothing else.
 
 ### Changed
 
@@ -41,6 +51,7 @@ Notable changes to OpenVibe.Run. The service is unreleased; everything below is 
 
 ### Notes
 
-- Run holds no Billing token: OpenVibe.Bot owns the node link and the per-second metering (plan T14 L1).
+- OpenVibe.Bot owns the node link and the per-second metering of the jobs it carries (plan T14 L1); Run's Billing
+  token is for the external provider's jobs only.
 - The repo is not deployed; the first deploy needs `ovhost`'s inventory, the `ov_run` database,
   `/etc/openvibe/run.env` and `openvibe.run` DNS (see STATUS.json).

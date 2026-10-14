@@ -3,7 +3,7 @@
 /**
  * The Bot client — Run → OpenVibe.Bot over Bot's internal jobs API (plan T14 step 6, R1c). Bot owns the
  * node link, the job row and the per-second metering; Run owns run.job.*, the project scope and the
- * placement, so this client never writes a usage record (Run holds no Billing token, plan T14 L1).
+ * placement, so this client never writes a usage record (Bot meters every job it carries, plan T14 L1).
  *
  *   send({ nodeId, job, project, subject, provider })   POST {RUN_BOT_URL}/api/v1/jobs           → { job, sent }
  *   cancel(jobId)                                       POST …/api/v1/jobs/{id}/cancel          → { job, sent } | null

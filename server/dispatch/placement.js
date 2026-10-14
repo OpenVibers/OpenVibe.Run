@@ -24,6 +24,15 @@
  * placed on a stranger's personal Node; Run drops user-owned offers unless the requirements name
  * user-owned (see For Opus: the SDK's TRUST_ORDER and the contract disagree).
  *
+ * External providers (plan T14 R4a): when an adapter is on (server/dispatch/browser-provider.js), the offers of
+ * kind=provider (GET …/api/v1/offers?kind=provider) whose `provider` names it and that advertise worker:<class>
+ * for a class the adapter runs are candidates beside the nodes, and plan() chooses among both. Such an offer has
+ * no device, so the placement's node is its node_id when it names one and its offer_id otherwise; the chosen
+ * `provider` is what the poller routes on (the job row stores it). A node offer cannot borrow that name: a kind
+ * node offer naming an external provider is dropped, so a job Bot carries is never mirrored from a provider.
+ * The provider's API key is Run's own environment's and never an offer's (platform.resource-offer@1 has no field
+ * for one).
+ *
  * Every offer is validated against platform.resource-offer@1 before it reaches plan(); the offers answer is
  * cached for RUN_OFFERS_TTL_MS, so one tick places many jobs off one read. A Network that does not answer
  * throws PlacementError(retryable) — the poller tries again next tick and never fails a job for it. An
@@ -32,6 +41,10 @@
 const contracts = require('openvibe-contracts');
 const { plan } = require('openvibe-sdk/placement');
 const { requirementsDefault } = require('../util');
+const { PROVIDER: BROWSER_PROVIDER } = require('./browser-provider');
+
+/** The offer `provider` names that route to an external adapter, never to Bot. */
+const EXTERNAL_PROVIDERS = new Set([BROWSER_PROVIDER]);
 
 /** The reserved Fabric capability of a runtime class (platform.runtime-class@1; ADR-046). */
 const workerCapability = (runtimeClass) => `worker:${runtimeClass}`;
@@ -48,18 +61,26 @@ class PlacementError extends Error {
 
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
 
-function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Date.now(), log = console } = {}) {
+/**
+ * createPlacement({ config, fetchImpl, now, log, providers }) → { choose, offers, status }. `providers` maps
+ * the name of each external adapter that is on to the classes it runs ({ 'browser-provider': ['browser'] }).
+ */
+function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Date.now(), log = console, providers = {} } = {}) {
     const { url } = config.network;
-    const offersUrl = `${url}/api/v1/offers?kind=node`;
+    const offersUrlOf = (kind) => `${url}/api/v1/offers?kind=${kind}`;
+    const offersUrl = offersUrlOf('node');
     const { offersTtlMs, timeoutMs } = config.dispatch;
-    let cache = { at: 0, offers: [], fetched: 0 };
+    const caches = new Map();   // kind → { at, offers, fetched }
+    const external = Object.entries(providers).filter(([name, classes]) => EXTERNAL_PROVIDERS.has(name) && Array.isArray(classes) && classes.length);
 
-    /** The published node offers, cached briefly. A Network that does not answer is a retryable error. */
-    async function offers() {
+    /** The published offers of one kind, cached briefly. A Network that does not answer is a retryable error. */
+    async function offers(kind = 'node') {
+        const cache = caches.get(kind) || { at: 0, offers: [], fetched: 0 };
         if (cache.at && now() - cache.at < offersTtlMs) return cache.offers;
+        const href = offersUrlOf(kind);
         let res;
         try {
-            res = await fetchImpl(offersUrl, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
+            res = await fetchImpl(href, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
         } catch (e) {
             const why = e && (e.name === 'TimeoutError' || e.name === 'AbortError') ? `no answer within ${timeoutMs} ms` : 'unreachable';
             throw new PlacementError('run.dispatch.no_offers', `Network did not answer for the resource offers (${why})`);
@@ -78,7 +99,7 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
             }
             good.push(offer);
         }
-        cache = { at: now(), offers: good, fetched: good.length };
+        caches.set(kind, { at: now(), offers: good, fetched: good.length });
         return good;
     }
 
@@ -90,10 +111,18 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
         const want = workerCapability(row.class);
         const requirements = { ...obj(row.job).requirements || requirementsDefault(row.class) };
         const userOwnedNamed = Array.isArray(requirements.trust) && requirements.trust.includes('user-owned');
-        const candidates = (await offers()).filter((o) => o.kind === 'node'
+        const trusted = (o) => (o.capabilities || []).includes(want) && (o.trust !== 'user-owned' || userOwnedNamed);
+        const candidates = (await offers('node')).filter((o) => o.kind === 'node'
             && typeof o.node_id === 'string' && o.node_id.length > 0
-            && (o.capabilities || []).includes(want)
-            && (o.trust !== 'user-owned' || userOwnedNamed));
+            && !EXTERNAL_PROVIDERS.has(o.provider)
+            && trusted(o));
+        // An external provider that runs this class: its kind=provider offers are candidates too.
+        const names = new Set(external.filter(([, classes]) => classes.includes(row.class)).map(([name]) => name));
+        if (names.size) {
+            candidates.push(...(await offers('provider')).filter((o) => o.kind === 'provider' && names.has(o.provider)
+                && typeof o.offer_id === 'string' && o.offer_id.length > 0 && o.offer_id.length <= 128
+                && trusted(o)));
+        }
         if (!candidates.length) return null;
         const req = { ...requirements, capabilities: [...new Set([...(requirements.capabilities || []), want])] };
         contracts.assertValid('platform.workload-requirements@1', req);
@@ -104,7 +133,9 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
             return null;
         }
         return {
-            node_id: chosen.node_id, provider: chosen.provider ?? null, region: chosen.region ?? null,
+            // A provider offer has no device: its own id stands for where the job went (the read result's node).
+            node_id: chosen.kind === 'provider' ? (chosen.node_id || chosen.offer_id) : chosen.node_id,
+            provider: chosen.provider ?? null, region: chosen.region ?? null, kind: chosen.kind,
             offer_id: chosen.offer_id, trust: chosen.trust, reasons: result.reasons,
         };
     }
@@ -113,8 +144,14 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
         choose,
         offers,
         workerCapability,
-        status: () => ({ offers_url: offersUrl, cached: cache.fetched, fetched_at: cache.at ? new Date(cache.at).toISOString() : null, ttl_ms: offersTtlMs }),
+        status: () => {
+            const cache = caches.get('node') || { at: 0, fetched: 0 };
+            return {
+                offers_url: offersUrl, cached: cache.fetched, fetched_at: cache.at ? new Date(cache.at).toISOString() : null, ttl_ms: offersTtlMs,
+                providers: external.map(([name, classes]) => ({ provider: name, classes, cached: (caches.get('provider') || { fetched: 0 }).fetched })),
+            };
+        },
     };
 }
 
-module.exports = { createPlacement, PlacementError, workerCapability };
+module.exports = { createPlacement, PlacementError, workerCapability, EXTERNAL_PROVIDERS };
