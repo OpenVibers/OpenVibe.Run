@@ -178,7 +178,8 @@ function v1Router({ config, db, apiAuth, stream, tickets, events, dispatch, now 
 
     // ── POST /jobs/:id/cancel — run.job.cancel ─────────────────────────────────
     r.post('/jobs/:id/cancel', guard('run.job.cancel'), wrap(async (req, res) => {
-        const row = await getJob(req, req.params.id);
+        // A delegating service cancels only the jobs it started for that person (getOwn: via and requester match).
+        const row = await getJob(req, req.params.id, { delegated: true });
         if (!row) fail(404, 'run.job_not_found', 'no such job');
         const at = now();
         const out = await db.tx(async (t) => {
@@ -196,7 +197,8 @@ function v1Router({ config, db, apiAuth, stream, tickets, events, dispatch, now 
 
     // ── POST /jobs/:id/stream/ticket — run.job.stream ──────────────────────────
     r.post('/jobs/:id/stream/ticket', guard('run.job.stream'), wrap(async (req, res) => {
-        const row = await getJob(req, req.params.id);
+        // A delegating service gets a ticket only for a job it started for that person; the ticket opens that one stream.
+        const row = await getJob(req, req.params.id, { delegated: true });
         if (!row) fail(404, 'run.job_not_found', 'no such job');
         if (!tickets.get()) fail(503, 'run.stream.disabled', 'stream tickets are disabled: no stream key is configured (RUN_STREAM_PRIVATE_KEY or RUN_STREAM_KEY_FILE)');
         const { ticket, claims } = tickets.mint({ jobId: row.id, projectId: row.project_id });

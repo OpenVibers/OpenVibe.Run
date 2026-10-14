@@ -40,6 +40,7 @@
  */
 const contracts = require('openvibe-contracts');
 const { plan } = require('openvibe-sdk/placement');
+const { createServiceTokenClient } = require('openvibe-sdk/auth');
 const { requirementsDefault } = require('../util');
 const { PROVIDER: BROWSER_PROVIDER } = require('./browser-provider');
 
@@ -60,6 +61,8 @@ class PlacementError extends Error {
 }
 
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+/** The person a job was requested by (`user:usr_…`, as Run stores the requester), or null for a service or an app. */
+const personOf = (requester) => (/^user:(usr_[0-9A-HJKMNP-TV-Z]{26})$/.exec(String(requester || '')) || [])[1] || null;
 
 /**
  * createPlacement({ config, fetchImpl, now, log, providers }) → { choose, offers, status }. `providers` maps
@@ -72,6 +75,39 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
     const { offersTtlMs, timeoutMs } = config.dispatch;
     const caches = new Map();   // kind → { at, offers, fetched }
     const external = Object.entries(providers).filter(([name, classes]) => EXTERNAL_PROVIDERS.has(name) && Array.isArray(classes) && classes.length);
+    // A person's own machines (contracts 0.161.0): never on the public list, read from Network's internal one with
+    // network.registry.read, owner included. Without Run's client secret there are none to place on.
+    const { clientId, clientSecret } = obj(config.oauth);
+    const registryTokens = clientSecret
+        ? createServiceTokenClient({ tokenUrl: `${config.network.internalUrl}/oauth/token`, clientId, clientSecret, audience: 'openvibe.network', scope: 'network.registry.read', fetch: fetchImpl, now })
+        : null;
+    let owned = { at: 0, offers: [] };
+    /** Every live user-owned node offer that names its owner, from the internal list, cached like the public ones. */
+    async function ownedOffers() {
+        if (!registryTokens) return [];
+        if (owned.at && now() - owned.at < offersTtlMs) return owned.offers;
+        const href = `${config.network.internalUrl}/internal/resources?kind=node&trust=user-owned`;
+        let res;
+        try {
+            res = await fetchImpl(href, { headers: { Accept: 'application/json', ...(await registryTokens.authHeaders()) }, signal: AbortSignal.timeout(timeoutMs) });
+        } catch (e) {
+            const why = e && (e.name === 'TimeoutError' || e.name === 'AbortError') ? `no answer within ${timeoutMs} ms` : 'unreachable';
+            throw new PlacementError('run.dispatch.no_offers', `Network did not answer for the people's own machines (${why})`);
+        }
+        if (!res.ok) throw new PlacementError('run.dispatch.no_offers', `Network answered HTTP ${res.status} for the people's own machines`);
+        const doc = await res.json().catch(() => null);
+        const list = doc && Array.isArray(doc.offers) ? doc.offers : null;
+        if (!list) throw new PlacementError('run.dispatch.no_offers', 'the internal offers answer carries no offers array');
+        const good = list.filter((o) => {
+            if (!contracts.validate('platform.resource-offer@1', o).valid) {
+                log.warn(`[Run] offer ${obj(o).offer_id || '?'} does not match platform.resource-offer@1: dropped`);
+                return false;
+            }
+            return o.trust === 'user-owned' && typeof o.owner === 'string' && o.kind === 'node' && typeof o.node_id === 'string' && o.node_id.length > 0;
+        });
+        owned = { at: now(), offers: good };
+        return good;
+    }
 
     /** The published offers of one kind, cached briefly. A Network that does not answer is a retryable error. */
     async function offers(kind = 'node') {
@@ -111,11 +147,19 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
         const want = workerCapability(row.class);
         const requirements = { ...obj(row.job).requirements || requirementsDefault(row.class) };
         const userOwnedNamed = Array.isArray(requirements.trust) && requirements.trust.includes('user-owned');
-        const trusted = (o) => (o.capabilities || []).includes(want) && (o.trust !== 'user-owned' || userOwnedNamed);
+        // A user-owned offer is a person's own machine: eligible only for that person's own job, and only when the job
+        // names user-owned (contracts 0.161.0). The public list carries none; one that slipped in is never used, since
+        // only the internal read states the owner this rule needs.
+        const trusted = (o) => (o.capabilities || []).includes(want) && o.trust !== 'user-owned';
         const candidates = (await offers('node')).filter((o) => o.kind === 'node'
             && typeof o.node_id === 'string' && o.node_id.length > 0
             && !EXTERNAL_PROVIDERS.has(o.provider)
             && trusted(o));
+        const person = personOf(row.requester);
+        if (userOwnedNamed && person) {
+            candidates.push(...(await ownedOffers()).filter((o) => o.owner === person && (o.capabilities || []).includes(want)
+                && !EXTERNAL_PROVIDERS.has(o.provider)));
+        }
         // An external provider that runs this class: its kind=provider offers are candidates too.
         const names = new Set(external.filter(([, classes]) => classes.includes(row.class)).map(([name]) => name));
         if (names.size) {
@@ -154,4 +198,4 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
     };
 }
 
-module.exports = { createPlacement, PlacementError, workerCapability, EXTERNAL_PROVIDERS };
+module.exports = { createPlacement, PlacementError, workerCapability, EXTERNAL_PROVIDERS, personOf };
