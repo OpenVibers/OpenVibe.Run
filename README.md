@@ -44,7 +44,7 @@ placed from the Fabric's offers and actually runs — the poller in `server/jobs
 
 - The public site at openvibe.run (`server/web/home.js`, `server/app.js`): the front page in the OpenVibe Frame (what a
   job is and how it runs, the API in brief), the legal pages (`openvibe-shared/legal`), `robots.txt`, the sitemap,
-  the icon and the web manifest. It says only what works today; `test/site.test.js` checks it.
+  `/llms.txt` and `/llms-full.txt`, IndexNow (only with `INDEXNOW_KEY`: the key file and one ping at boot), the icon and the web manifest. It says only what works today; `test/site.test.js` checks it.
 - The job API (`server/api/v1.js`, one capability per route — the table below) and the job's lifecycle record
   (`run_jobs`, `migrations/0001_jobs.sql`): state, placement, timings, exit, result and the metered wall clock.
 - The project scope: a job's `project_id` and `requester` come from the caller's Network token

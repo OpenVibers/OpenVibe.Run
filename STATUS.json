@@ -49,7 +49,8 @@
     "run_jobs (migrations/0001_jobs.sql) holds every job, its state, placement, timings, exit, result and the metered wall clock",
     "Bot owns the node link and the per-second metering of the jobs it carries (plan T14 L1); Run holds a Billing token of its own (billing.usage.record, audience openvibe.billing) used only for the external managed-browser provider's jobs",
     "plan T14 R4a built, not deployed: the managed-browser provider adapter (server/dispatch/browser-provider.js; RUN_BROWSER_PROVIDER_URL / _API_KEY / _TIMEOUT_MS, off while unset) places class browser jobs on kind=provider offers named browser-provider, validates every answer against browser-provider.job-create-result@1 / job-state@1 and never adopts a malformed one; Run meters those jobs itself, the provider's claimed wall time clamped to Run's observed duration + 5 s, and relays the readings from run_usage_outbox (migrations/0003_usage_outbox.sql) to Billing (RUN_BILLING_URL; unset, they wait and the jobs still run)",
-    "truthful readiness (GET /api/ready: db required; valkey, Network JWKS, Events, Bot reachability and the poller's own status reported, never claimed) and the loopback-only /metrics gauges (jobs queued, active, ended, outbox backlog, streams)"
+    "truthful readiness (GET /api/ready: db required; valkey, Network JWKS, Events, Bot reachability and the poller's own status reported, never claimed) and the loopback-only /metrics gauges (jobs queued, active, ended, outbox backlog, streams)",
+    "plan T11 step 4 built, not deployed: /llms.txt and /llms-full.txt (server/web/discovery.js, public pages and docs only, never the API, admin, a job or a stream) and IndexNow (INDEXNOW_KEY: serves GET /<key>.txt and pings the public pages once at boot; unset, the key route is 404 and nothing is sent)"
   ],
   "updated": "2026-10-13"
 }

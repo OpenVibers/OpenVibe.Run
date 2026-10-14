@@ -33,7 +33,7 @@ async function main() {
     const valkey = createValkey({ url: config.valkey.url, prefix: config.valkey.prefix });
 
     const app = createApp({ config, db, valkey, registry });
-    const { keys, outbox, stream, tickets, dispatch } = app.locals;
+    const { keys, outbox, stream, tickets, dispatch, indexnow } = app.locals;
     keys.start();
     const ticketKey = tickets.start();
 
@@ -50,6 +50,8 @@ async function main() {
         console.log(`[Run] jobs ${config.jobs.enabled ? 'on' : 'off (RUN_JOBS=off)'}; events relay ${outbox.enabled ? `→ ${config.events.url}` : 'off (run.job.* events wait in the outbox)'}; stream tickets ${ticketKey.enabled ? `on (${config.stream.keyId}${ticketKey.ephemeral ? ', ephemeral key' : ''})` : 'off (no stream key)'}; dispatcher ${dispatch.enabled ? `on (poll ${config.dispatch.pollMs} ms): ${dispatch.note}` : `off: ${dispatch.note}`}; ${dispatch.status().usage_relay.note}`);
     });
     server.keepAliveTimeout = 65_000;
+    // The public pages change with a deploy: tell the engines once, and only with INDEXNOW_KEY set.
+    require('./web/discovery').notify(indexnow, config);
 
     // systemd sends SIGTERM (SIGINT by hand); openvibe-sdk/service's gracefulStop takes the signal, runs the
     // stop steps in order (nothing new starts), drains the HTTP server — event streams are destroyed, so a

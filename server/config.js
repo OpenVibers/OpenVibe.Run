@@ -67,6 +67,8 @@ function loadConfig(env = process.env) {
             clientId: env.OV_OAUTH_CLIENT_ID || 'run',
             clientSecret: env.OV_OAUTH_CLIENT_SECRET || '',
         },
+        // IndexNow (openvibe-shared/indexnow): unset, nothing is sent and the key file is not served.
+        indexnow: { key: (env.INDEXNOW_KEY || '').trim() },
         cookies: { secure: env.COOKIE_SECURE != null ? bool(env.COOKIE_SECURE) : isProduction },
 
         events: {
