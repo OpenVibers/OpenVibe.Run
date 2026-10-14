@@ -397,23 +397,38 @@ async function main() {
             bot.devices.set(DEVICE, { classes: ['function'] });
         });
 
-        await check('a user-owned node is eligible only when the job\'s requirements name it', async () => {
+        await check('a person\'s own machine runs only that person\'s jobs, and only when the job names user-owned', async () => {
             bot.devices.set(OTHER_DEVICE, { classes: ['function'] });
-            t.setOffers([offer({ offer_id: 'off_user', trust: 'user-owned', node_id: OTHER_DEVICE })]);
-            const projectA = PROJECT();
-            const plain = await submit({}, { project: projectA });
-            const denied = (await t.dispatch.poll()).find((a) => a.job_id === plain.id);
-            assert.strictEqual(denied.state, 'queued');                              // user-owned is never a default: no eligible node
-            const readA = await read(plain.id, projectA);
-            assert.strictEqual(readA.json.state, 'queued');
-            assert.strictEqual(readA.json.placement, null);
-            await t.db.exec('UPDATE run_jobs SET created_at = created_at - 100000000 WHERE id = $1', [plain.id]);
+            const ada = ids.newId('user');
+            const bo = ids.newId('user');
+            const P = PROJECT();
+            t.network.members.set(`${P} ${ada}`, { role: 'owner' });
+            t.network.members.set(`${P} ${bo}`, { role: 'owner' });
+            t.setOffers([offer({ offer_id: 'off_user', trust: 'user-owned', owner: ada, provider: 'self', node_id: OTHER_DEVICE })]);
+            const named = { requirements: { kind: 'run.function', mobility: 'job', latency_class: 'background', objective: 'balanced', trust: ['user-owned'] } };
+            const asPerson = async (subject, over) => {
+                const r = await t.call('POST', '/api/v1/jobs', { body: t.request(over), token: t.network.signService({ sub: 'svc:codes', cap: ['run.job.submit', 'run.job.read'] }), headers: { 'X-OV-Subject': subject, 'X-OV-Project': P } });
+                assert.strictEqual(r.status, 201, r.text);
+                return r.json.job;
+            };
+            const settle = async (job) => (await t.dispatch.poll()).find((a) => a.job_id === job.id);
+            // A job that does not name user-owned never lands on anyone's machine, its owner's included.
+            assert.strictEqual((await settle(await asPerson(ada, {}))).state, 'queued');
+            // A job naming user-owned that is another person's, or no person's (a project's own token), waits too.
+            assert.strictEqual((await settle(await asPerson(bo, named))).state, 'queued');
+            assert.strictEqual((await settle(await submit(named, { project: PROJECT() }))).state, 'queued');
+            // The owner's own job is placed on their machine, its owner read from Network's internal list.
+            const reads = t.network.internalReads.n;
+            const mine = await settle(await asPerson(ada, named));
+            assert.strictEqual(mine.state, 'placed');
+            assert.strictEqual(mine.node_id, OTHER_DEVICE);
+            assert.ok(t.network.internalReads.n > reads, 'the owner came from the internal read');
+            assert.ok(t.network.tokenRequests.scopes.includes('network.registry.read'));
+            // The public list never carried it.
+            const pub = await (await fetch(`${t.network.url}/api/v1/offers?kind=node`)).json();
+            assert.strictEqual(pub.offers.length, 0);
+            await t.db.exec(`UPDATE run_jobs SET created_at = created_at - 100000000 WHERE state = 'queued'`);
             await t.dispatch.sweep();
-            const projectB = PROJECT();
-            const named = await submit({ requirements: { kind: 'run.function', mobility: 'job', latency_class: 'background', objective: 'balanced', trust: ['user-owned', 'first-party'] } }, { project: projectB });
-            const placed = (await t.dispatch.poll()).find((a) => a.job_id === named.id);
-            assert.strictEqual(placed.state, 'placed');
-            assert.strictEqual(placed.node_id, OTHER_DEVICE);
             bot.devices.delete(OTHER_DEVICE);
         });
 
@@ -530,9 +545,10 @@ async function main() {
         });
 
         await check('the Bot token is minted once and reused, never per call', async () => {
-            assert.strictEqual(t.network.tokenRequests.n, 1, JSON.stringify(t.network.tokenRequests));
-            assert.deepStrictEqual(t.network.tokenRequests.audiences, ['openvibe.bot']);
-            assert.deepStrictEqual(t.network.tokenRequests.scopes, ['bot.job.dispatch']);
+            // Other tokens are Run's Network reads (the membership check and the people's own machines).
+            const req = t.network.tokenRequests;
+            const bot = req.audiences.map((aud, i) => [aud, req.scopes[i]]).filter(([aud]) => aud === 'openvibe.bot');
+            assert.deepStrictEqual(bot, [['openvibe.bot', 'bot.job.dispatch']], JSON.stringify(req));
         });
 
         await check('the stream accepts a Bearer service token holding run.job.stream, and only that', async () => {

@@ -40,6 +40,7 @@ async function startNetwork() {
     const issuer = 'http://network.test';
     const tokenRequests = { n: 0, audiences: [], scopes: [] };
     const offers = [];   // what the registry publishes; a test replaces its contents (t.setOffers)
+    const internalReads = { n: 0 };
     // Project memberships Network states (GET /internal/projects/:project/members/:subject, project delegation):
     // `${project} ${subject}` → { role, archived }; memberReads counts the reads, memberFail makes them answer 500.
     const members = new Map();
@@ -66,9 +67,21 @@ async function startNetwork() {
         if (req.method === 'GET' && req.url.startsWith('/api/v1/offers')) {
             const query = new URL(req.url, 'http://network.test').searchParams;
             const kind = query.get('kind');
-            const docs = kind ? offers.filter((o) => o.kind === kind) : offers;
+            // A person's own machine is never public (contracts 0.161.0): the public list leaves user-owned offers out.
+            const docs = (kind ? offers.filter((o) => o.kind === kind) : offers).filter((o) => o.trust !== 'user-owned');
             res.writeHead(200, { 'Content-Type': 'application/json' });
             return res.end(JSON.stringify({ offers: docs, count: docs.length, generated_at: new Date().toISOString(), filters: kind ? { kind } : {} }));
+        }
+        // The internal list (network.registry.read), user-owned offers and their owners included.
+        if (req.method === 'GET' && req.url.startsWith('/internal/resources')) {
+            internalReads.n++;
+            const token = String(req.headers.authorization || '').replace(/^Bearer /, '');
+            const v = serviceAuth.verifyServiceToken(token, { publicKey: publicPem, issuer, audience: 'openvibe.network' });
+            if (!v.ok || !(v.claims.cap || []).includes('network.registry.read')) { res.writeHead(403, { 'Content-Type': 'application/json' }); return res.end('{}'); }
+            const query = new URL(req.url, 'http://network.test').searchParams;
+            const docs = offers.filter((o) => (!query.get('kind') || o.kind === query.get('kind')) && (!query.get('trust') || o.trust === query.get('trust')));
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ offers: docs, count: docs.length, generated_at: new Date().toISOString(), filters: {} }));
         }
         if (req.method === 'POST' && req.url === '/oauth/token') {
             let body = '';
@@ -100,7 +113,7 @@ async function startNetwork() {
     });
     const url = await listen(server);
     return {
-        url, issuer, publicPem, privatePem, tokenRequests, offers, members, memberState,
+        url, issuer, publicPem, privatePem, tokenRequests, offers, members, memberState, internalReads,
         /** Publish exactly these platform.resource-offer@1 documents (the array keeps its identity). */
         setOffers(list) { offers.splice(0, offers.length, ...list); },
         close: () => new Promise((r) => server.close(r)),

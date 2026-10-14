@@ -52,9 +52,10 @@ placed from the Fabric's offers and actually runs — the poller in `server/jobs
 - Project delegation (ADR-003 amendment 2026-10-12): a first-party service acting for a person (`X-OV-Subject`) may
   name a project with `X-OV-Project`. Run asks Network whether the person is an admin or owner of the unarchived
   project (`network.project.member.read`, a yes cached 60 s), then the person is the requester and the service is
-  stored as `via` (`migrations/0002_job_via.sql`). The service submits and reads only the jobs it started for that
-  person; list, cancel and stream are `403 project.not_delegated`, and so is any other caller naming a project. Network
-  unreachable is `503 project.check_unavailable`. Watch's `run-job` action is the first user.
+  stored as `via` (`migrations/0002_job_via.sql`). The service submits, reads, cancels and gets a stream ticket for only
+  the jobs it started for that person (another person's or another service's job is `404`); list and a delegated Bearer
+  stream are `403 project.not_delegated`, and so is any other caller naming a project. Network unreachable is
+  `503 project.check_unavailable`. Watch's `run-job` action and OpenVibe.Codes' coding jobs use it.
 - The `job_<ULID>` id (minted here, passed unchanged to Bot as `platform.job@1` `id`, so every metering reading of
   the job is `run:<id>:<n>`).
 - Idempotent submit: one row per `(project_id, idempotency_key)`, a repeat answering the first job, a different body
@@ -67,9 +68,11 @@ placed from the Fabric's offers and actually runs — the poller in `server/jobs
   objective: balanced }`, the contract's own default) and the project caps on a job's limits.
 - Placement (plan T14 R3, `server/dispatch/placement.js`): the job's requirements are stated by Run and the choice
   among offers is `openvibe-sdk/placement` `plan()` — Run writes no placer of its own (ADR-036). The job's
-  `worker:<class>` capability is what a candidate must advertise, and a user-owned offer is eligible only when the
-  job's requirements name `user-owned` (the contract's own rule; the SDK's fallback trust list would otherwise
-  admit it).
+  `worker:<class>` capability is what a candidate must advertise. A user-owned offer is a person's own machine
+  (contracts 0.161.0): it is eligible only for that person's own job (requester `user:usr_…` equal to the offer's
+  `owner`) whose requirements name `user-owned`. Network keeps such offers off the public list, so Run reads them,
+  owners included, from `GET /internal/resources?kind=node&trust=user-owned` with its own client
+  (`network.registry.read`); a user-owned offer on the public list is never used.
 - The poller (`server/jobs/poller.js`): the ttl sweep, the send, the mirror, the cancel-on-Bot and the job's stdout
   into the stream.
 

@@ -73,16 +73,28 @@ async function checks(t) {
         assert.strictEqual(project.status, 200, project.text);
     });
 
-    await check('list, cancel and stream stay with project tokens', async () => {
+    await check('the delegating service cancels and streams only the jobs it started for that person; list stays with project tokens', async () => {
         refused(await t.call('GET', '/api/v1/jobs', as(ada, P)), 'list');
-        refused(await t.call('POST', `/api/v1/jobs/${jobId}/cancel`, as(ada, P)), 'cancel');
-        refused(await t.call('POST', `/api/v1/jobs/${jobId}/stream/ticket`, as(ada, P)), 'stream ticket');
         const d = as(ada, P);
-        const stream = await t.sse(`/api/v1/jobs/${jobId}/stream`, { headers: { Authorization: `Bearer ${d.token}`, ...d.headers } });
-        assert.strictEqual(stream.status, 403, stream.text);
-        assert.strictEqual(stream.json.code, 'project.not_delegated');
-        const [row] = await t.db.many('SELECT state FROM run_jobs WHERE id = $1', [jobId]);
-        assert.strictEqual(row.state, 'queued', 'the refused cancel changed nothing');
+        const bearer = await t.sse(`/api/v1/jobs/${jobId}/stream`, { headers: { Authorization: `Bearer ${d.token}`, ...d.headers } });
+        assert.strictEqual(bearer.status, 403, bearer.text);
+        assert.strictEqual(bearer.json.code, 'project.not_delegated', 'a delegated bearer does not stream: it asks for a ticket');
+        // Another person, another service: the same 404 as a job that does not exist, for the ticket and the cancel.
+        for (const other of [as(bo, P), as(ada, P, { sub: 'svc:actor' })]) {
+            for (const path of [`/api/v1/jobs/${jobId}/stream/ticket`, `/api/v1/jobs/${jobId}/cancel`]) {
+                const r = await t.call('POST', path, other);
+                assert.strictEqual(r.status, 404, `${path}: ${r.text}`);
+                assert.strictEqual(r.json.code, 'run.job_not_found');
+            }
+        }
+        const [still] = await t.db.many('SELECT state FROM run_jobs WHERE id = $1', [jobId]);
+        assert.strictEqual(still.state, 'queued', 'the refused cancels changed nothing');
+        const ticket = await t.call('POST', `/api/v1/jobs/${jobId}/stream/ticket`, as(ada, P));
+        assert.strictEqual(ticket.status, 200, ticket.text);
+        assert.ok(typeof ticket.json.ticket === 'string' && ticket.json.job_id === jobId, JSON.stringify(ticket.json));
+        const cancelled = await t.call('POST', `/api/v1/jobs/${jobId}/cancel`, as(ada, P));
+        assert.strictEqual(cancelled.status, 200, cancelled.text);
+        assert.strictEqual(cancelled.json.state, 'cancelled');
     });
 
     await check('a developer, a viewer, a non-member and an archived project are refused alike', async () => {
