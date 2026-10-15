@@ -52,9 +52,9 @@ async function main() {
     });
     server.keepAliveTimeout = 65_000;
     // Request telemetry (openvibe-sdk/service, plan T1): one aggregated sample per route template, method and status
-    // class each 15 s, stored in this service's telemetry_samples table; rows older than 30 days go daily.
-    telemetry.init({ service: 'run', sink: createPgTelemetrySink({ db: db, log: console }), skipPrefixes: ['/shared'] });
-    const telemetryRetention = startTelemetryRetention({ db: db, log: console });
+    // class each minute, stored in this service's telemetry_samples table; rows older than 14 days go daily.
+    telemetry.init({ service: 'run', sink: createPgTelemetrySink({ db: db, log: console }), skipPrefixes: ['/shared'], intervalMs: 60_000 });
+    const telemetryRetention = startTelemetryRetention({ db: db, log: console, olderThanDays: 14 });
     // The public pages change with a deploy: tell the engines once, and only with INDEXNOW_KEY set.
     require('./web/discovery').notify(indexnow, config);
 
