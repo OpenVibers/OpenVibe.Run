@@ -10,6 +10,7 @@
  *   HOME_CSP                 its Content-Security-Policy (the Frame's scripts and calls to the Network)
  */
 const shell = require('openvibe-shared/shell');
+const frame = require('openvibe-shared/frame');
 const showcase = require('openvibe-shared/showcase');
 const appIcon = require('openvibe-shared/app-icon');
 const ovServe = require('openvibe-shared/serve');
@@ -54,10 +55,27 @@ function renderHome({ config }) {
         title: `${SITE_NAME}: run a job on a node that can`,
         siteName: SITE_NAME, description: DESCRIPTION, summary: DESCRIPTION,
         canonical: `${config.baseUrl}/`, robots: 'index, follow',
-        navbar: nav, footer: { service: 'run', variant: 'full', mount: '#ov-footer', brandName: SITE_NAME }, home: '/',
+        navbar: nav, footer: FOOTER, home: '/',
         navLinks: nav.links,
         head: [appIcon.headTags({ site: 'run' }), '<link rel="manifest" href="/manifest.webmanifest">', `<link rel="stylesheet" href="${ovServe.url(showcase.STYLESHEET)}">`].join('\n'),
         body: `<div id="navbar-mount"></div>\n<main id="main">${body()}</main>`,
+    });
+}
+
+const FOOTER = { service: 'run', variant: 'full', mount: '#ov-footer', brandName: SITE_NAME, updates: '/updates' };
+
+/** /updates: what shipped on this site, the network's shared update log (openvibe-shared/frame updatesBody). */
+function renderUpdates({ config }) {
+    const links = [{ label: 'How it works', href: '/#how' }, { label: 'API', href: '/#api' }];
+    return shell.page({
+        name: SITE_NAME, service: 'run', lang: 'en',
+        title: `What shipped on ${SITE_NAME}`,
+        siteName: SITE_NAME, description: `Every change deployed to ${SITE_NAME}, newest first.`,
+        canonical: `${config.baseUrl}/updates`, robots: 'index, follow',
+        navbar: { service: 'run', apiBase: NETWORK_URL, links, history: { type: 'page', title: SITE_NAME } },
+        footer: FOOTER, home: '/', navLinks: links,
+        head: [appIcon.headTags({ site: 'run' }), '<link rel="manifest" href="/manifest.webmanifest">'].join('\n'),
+        body: `<div id="navbar-mount"></div>\n<main id="main" class="page">\n${frame.updatesBody({ service: 'run', siteName: SITE_NAME })}\n</main>\n<script src="${ovServe.url('shipped.js')}" defer></script>`,
     });
 }
 
@@ -102,4 +120,4 @@ function body() {
 </section>`;
 }
 
-module.exports = { renderHome, HOME_CSP, SITE_NAME, DESCRIPTION };
+module.exports = { renderHome, renderUpdates, HOME_CSP, SITE_NAME, DESCRIPTION };
