@@ -223,6 +223,7 @@ until Run has a product surface; the vhost below is installed then.
 | `deploy/systemd/openvibe-run.service` | The systemd unit (release layout `/opt/openvibe.run`) |
 | `.github/workflows/ci.yml` | CI: the shared test job (syntax, tests, `openvibe-contracts-check --service run`) and the shared security job |
 | `migrations/0001_jobs.sql` | `run_jobs` and `run_events_outbox` |
+| `migrations/0004_telemetry.sql` | `telemetry_samples`: request telemetry (openvibe-sdk 0.46, `platform.telemetry-sample@1`) — each HTTP request aggregated by route template, method and status class, never the raw URL, with `/shared` files, static assets, health, readiness and `/metrics` not counted; once a minute one `http.request` sample per key, plus the active-requests, p95 latency and event-loop-lag gauges; rows older than 14 days deleted daily; wired in `server/app.js` (`telemetryMiddleware`, a no-op until init) and `server/index.js` (`telemetry.init()` at production start, retention, flush on stop) |
 | `STATUS.json` | What this repository is, what it does today and where it runs |
 
 <!-- versions:start -->
