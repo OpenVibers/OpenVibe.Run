@@ -21,7 +21,8 @@ const { loadConfig } = require('./config');
 const { openDb, migrate } = require('./db');
 const { createApp } = require('./app');
 const { createValkey } = require('openvibe-sdk/valkey');
-const { gracefulStop } = require('openvibe-sdk/service');
+const { gracefulStop, telemetry } = require('openvibe-sdk/service');
+const { createPgTelemetrySink, startTelemetryRetention } = require('openvibe-sdk/telemetry');
 const { createRegistry } = require('openvibe-shared/metrics');
 
 async function main() {
@@ -50,6 +51,10 @@ async function main() {
         console.log(`[Run] jobs ${config.jobs.enabled ? 'on' : 'off (RUN_JOBS=off)'}; events relay ${outbox.enabled ? `→ ${config.events.url}` : 'off (run.job.* events wait in the outbox)'}; stream tickets ${ticketKey.enabled ? `on (${config.stream.keyId}${ticketKey.ephemeral ? ', ephemeral key' : ''})` : 'off (no stream key)'}; dispatcher ${dispatch.enabled ? `on (poll ${config.dispatch.pollMs} ms): ${dispatch.note}` : `off: ${dispatch.note}`}; ${dispatch.status().usage_relay.note}`);
     });
     server.keepAliveTimeout = 65_000;
+    // Request telemetry (openvibe-sdk/service, plan T1): one aggregated sample per route template, method and status
+    // class each 15 s, stored in this service's telemetry_samples table; rows older than 30 days go daily.
+    telemetry.init({ service: 'run', sink: createPgTelemetrySink({ db: db, log: console }), skipPrefixes: ['/shared'] });
+    const telemetryRetention = startTelemetryRetention({ db: db, log: console });
     // The public pages change with a deploy: tell the engines once, and only with INDEXNOW_KEY set.
     require('./web/discovery').notify(indexnow, config);
 
@@ -71,6 +76,7 @@ async function main() {
             () => outbox.stop(),
         ],
         close: [
+            async () => { if (telemetryRetention) await telemetryRetention.stop(); await telemetry.stop(); },
             () => db.close().catch(() => {}),
             () => valkey && valkey.close().catch(() => {}),
         ],
