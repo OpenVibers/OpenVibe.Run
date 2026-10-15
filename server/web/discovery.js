@@ -11,12 +11,13 @@ const REPO = 'https://github.com/OpenVibers/OpenVibe.Run';
 const NODE_REPO = 'https://github.com/OpenVibers/OpenVibe.Node';
 
 // The public pages, in the order the sitemap lists them.
-const PAGES = ['/', '/terms', '/privacy', '/dmca'];
+const PAGES = ['/', '/updates', '/terms', '/privacy', '/dmca'];
 
 function sections(base) {
     return [
         { title: 'Pages', links: [
             { title: 'OpenVibe.Run', url: `${base}/`, note: 'what a job is, how it runs, and the API in brief' },
+            { title: 'What shipped', url: `${base}/updates`, note: 'every change deployed, newest first' },
             { title: 'Terms', url: `${base}/terms` },
             { title: 'Privacy', url: `${base}/privacy` },
             { title: 'DMCA', url: `${base}/dmca` },

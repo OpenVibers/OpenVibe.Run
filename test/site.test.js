@@ -37,6 +37,15 @@ const { boot, check, done } = require('./helpers/app');
             const manifest = JSON.parse((await t.call('GET', '/manifest.webmanifest', { token: null })).text);
             assert.strictEqual(manifest.name, 'OpenVibe.Run');
         });
+        await check('/updates: the shared update log in the Frame, one heading, in the sitemap', async () => {
+            const r = await t.call('GET', '/updates', { token: null });
+            assert.strictEqual(r.status, 200);
+            assert.ok(r.text.includes('<h1>What shipped on OpenVibe.Run</h1>') && r.text.includes('data-ov-shipped="log" data-service="run"'));
+            assert.strictEqual((r.text.match(/<h1[\s>]/g) || []).length, 1);
+            assert.match(r.text, /<script src="\/shared\/shipped\.js\?v=[0-9a-f]+" defer><\/script>/);
+            assert.match(r.headers.get('content-security-policy'), /connect-src 'self' https:\/\/openvibe\.network/);
+            assert.match((await t.call('GET', '/sitemap.xml', { token: null })).text, /<loc>[^<]*\/updates<\/loc>/);
+        });
         await check('an unknown API path is still a problem+json 404', async () => {
             const r = await t.call('GET', '/api/v1/nothing-here', { token: null });
             assert.strictEqual(r.status, 404);

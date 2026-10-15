@@ -59,7 +59,7 @@ const KEY = require('crypto').randomBytes(16).toString('hex');
             assert.strictEqual(sent.length, 1);
             assert.strictEqual(sent[0].key, KEY);
             assert.strictEqual(sent[0].keyLocation, `https://run.test/${KEY}.txt`);
-            assert.deepStrictEqual(sent[0].urlList.slice(0, 2), ['https://run.test/', 'https://run.test/terms']);
+            assert.deepStrictEqual(sent[0].urlList.slice(0, 3), ['https://run.test/', 'https://run.test/updates', 'https://run.test/terms']);
             assert.ok(sent[0].urlList.every((u) => !/\/api\/|\/internal\//.test(u)));
         });
     } finally {
