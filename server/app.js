@@ -128,7 +128,12 @@ function createApp(opts = {}) {
     app.get('/robots.txt', (req, res) => res.type('text/plain').send(['User-agent: *', 'Allow: /$', 'Disallow: /api/', 'Disallow: /internal/', `Sitemap: ${config.baseUrl}/sitemap.xml`, ''].join('\n')));
     app.get('/sitemap.xml', (req, res) => res.type('application/xml').send(require('openvibe-shared/seo').sitemapXml(discovery.PAGES.map((p) => ({ loc: `${config.baseUrl}${p}` })))));
     app.get('/favicon.ico', (req, res) => res.type('image/svg+xml').set('Cache-Control', 'public, max-age=86400').send(appIcon.favicon({ site: 'run' })));
-    app.get('/manifest.webmanifest', (req, res) => res.type('application/manifest+json').send(JSON.stringify(appIcon.manifest({ site: 'run', name: home.SITE_NAME, shortName: 'Run', description: home.DESCRIPTION, startUrl: '/' }))));
+    // The web app manifest. Its icons are the shared set (openvibe-shared/app-icons, under /shared/icons): it named
+    // /assets/logo-*.png, which this site never served (every install icon was a 404 until 2026-10-17).
+    app.get('/manifest.webmanifest', (req, res) => res.type('application/manifest+json').send(JSON.stringify({
+        ...appIcon.manifest({ site: 'run', name: home.SITE_NAME, shortName: 'Run', description: home.DESCRIPTION, startUrl: '/' }),
+        icons: [192, 512].flatMap((s) => [false, true].map((maskable) => ({ src: require('openvibe-shared/app-icons').url('run', s, { maskable }), sizes: `${s}x${s}`, type: 'image/png', purpose: maskable ? 'maskable' : 'any' }))),
+    })));
 
     app.use((req, res) => {
         if (req.path.startsWith('/api/') || req.path.startsWith('/internal/')) return http.sendProblem(res, 404, 'not_found', { ctx: req.ov });
