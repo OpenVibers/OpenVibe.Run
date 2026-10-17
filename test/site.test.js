@@ -36,6 +36,7 @@ const { boot, check, done } = require('./helpers/app');
             assert.match((await t.call('GET', '/favicon.ico', { token: null })).headers.get('content-type'), /image\/svg\+xml/);
             const manifest = JSON.parse((await t.call('GET', '/manifest.webmanifest', { token: null })).text);
             assert.strictEqual(manifest.name, 'OpenVibe.Run');
+            assert.ok(manifest.icons.length === 4 && manifest.icons.every((i) => /^\/shared\/icons\/[a-z0-9-]+-(maskable-)?(192|512)\.png\?v=/.test(i.src)), 'the shared icon set, which the site serves');
         });
         await check('/updates: the shared update log in the Frame, one heading, in the sitemap', async () => {
             const r = await t.call('GET', '/updates', { token: null });
