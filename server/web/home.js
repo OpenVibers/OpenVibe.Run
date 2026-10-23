@@ -48,9 +48,23 @@ const FAQ_CSS = '<style>.run-faq{border:1px solid var(--border,#1f2d47);border-r
 
 const code = (s) => `<code>${s.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</code>`;
 
+// The samples run as written: the first declares the artifact the other two submit, on the person's own paired machine
+// (the OpenVibe Node runs only what its owner declared: OpenVibe.Node docs/worker.md).
+const MACHINE_EXAMPLE = `# On your paired machine (installed with --worker): a function is a command you declare.
+# Its args arrive as one line of JSON on stdin, its stdout streams back, and fd 3 is its result.
+sudo mkdir -p /opt/fn/hello && sudo tee /opt/fn/hello/run > /dev/null <<'EOF'
+#!/bin/sh
+read -r args
+echo "hello from job $OPENVIBE_JOB_ID: $args"
+printf '{"ok":true}' >&3
+EOF
+sudo chmod 755 /opt/fn/hello/run
+# Add it to "worker" → "functions" in /etc/openvibe-node/config.json, then: sudo systemctl restart openvibe-node
+#   {"name": "hello", "version": "1.0.0", "command": ["/opt/fn/hello/run"]}`;
+
 const SUBMIT_EXAMPLE = `curl -X POST https://openvibe.run/api/v1/jobs \\
   -H "Authorization: Bearer $PROJECT_TOKEN" -H "Content-Type: application/json" \\
-  -d '{"class":"function","artifact":{"name":"thumbnail","version":"1.2.0"},"args":{"width":320},
+  -d '{"class":"function","artifact":{"name":"hello","version":"1.0.0"},"args":{"name":"world"},
        "limits":{"wall_ms":30000,"cpu_ms":30000,"mem_bytes":268435456},"ttl_ms":600000}'`;
 
 function renderHome({ config }) {
@@ -95,7 +109,7 @@ const { createRunClient } = require('openvibe-sdk/run');
 
 const run = createRunClient(createClient({ tokenProvider: tokens })).forProject('prj_…');
 const { job } = await run.jobs.submit({
-    class: 'function', artifact: { name: 'thumbnail', version: '1.2.0' }, args: { width: 320 },
+    class: 'function', artifact: { name: 'hello', version: '1.0.0' }, args: { name: 'world' },
     limits: { wall_ms: 30000, cpu_ms: 30000, mem_bytes: 268435456 }, ttl_ms: 600000,
 });
 for await (const ev of run.jobs.events(job.id)) console.log(ev.type, ev.data);   // state changes and output, until it ends`;
@@ -151,8 +165,9 @@ function body() {
     }) + showcase.code({
         id: 'api',
         title: 'The API',
-        lede: 'Jobs are created with a project token from OpenVibe.Services (run.job.submit; reading, listing, cancelling and streaming take run.job.read, run.job.list, run.job.cancel and run.job.stream). A job names its runtime class, a pre-registered artifact (a name and one exact version), its input and its limits.',
-        samples: [{ label: 'Node (openvibe-sdk)', lang: 'js', code: SDK_EXAMPLE }, { label: 'curl', lang: 'bash', code: SUBMIT_EXAMPLE }],
+        lede: 'Jobs are created with a project token from OpenVibe.Services (run.job.submit; reading, listing, cancelling and streaming take run.job.read, run.job.list, run.job.cancel and run.job.stream). A job names its runtime class, an artifact a machine declares (a name and one exact version: the first sample declares the one the other two run), its input and its limits.',
+        samples: [{ label: 'Your machine', lang: 'bash', code: MACHINE_EXAMPLE }, { label: 'Node (openvibe-sdk)', lang: 'js', code: SDK_EXAMPLE },
+            { label: 'curl', lang: 'bash', code: SUBMIT_EXAMPLE }],
     }) + showcase.features({
         title: 'The job routes',
         items: [
