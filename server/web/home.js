@@ -116,7 +116,7 @@ for await (const ev of run.jobs.events(job.id)) console.log(ev.type, ev.data);  
 
 function body() {
     return showcase.hero({
-        eyebrow: 'OpenVibe.Run · jobs on nodes · alpha',
+        eyebrow: 'OpenVibe.Run · part of OpenVibe Services · alpha',
         title: 'Run jobs on your own machine,',
         accent: 'or on a node that can.',
         lede: 'Pair a computer once and the jobs you start run there, on your hardware, with their output streamed back to you. '
@@ -133,7 +133,7 @@ function body() {
             { title: 'Watch it run', text: 'The job\'s event stream shows each state change and the machine\'s output as it is written.' },
             { title: 'Keep the record', text: 'Every job ends succeeded, failed, cancelled or expired, with its timings, its exit and the seconds it ran.' },
         ],
-    }) + showcase.steps({
+    }) + '<section class="sc-sec sc-part-of"><p class="sc-note">Part of <a href="https://openvibe.services/">OpenVibe Services</a>: the building blocks every OpenVibe product runs on, with one console, one account and one SDK.</p></section>' + showcase.steps({
         id: 'how',
         title: 'How a job runs',
         items: [
