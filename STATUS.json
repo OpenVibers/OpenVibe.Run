@@ -7,11 +7,11 @@
   "runtime": "node 22, express 4, PostgreSQL 18 (openvibe-sdk/db) + Valkey 9",
   "port": 4920,
   "domain": "openvibe.run",
-  "contracts": "openvibe-contracts v0.222.0",
+  "contracts": "openvibe-contracts v0.223.0",
   "sdk": "openvibe-sdk v0.67.0",
   "shared": "openvibe-shared v4.19.0",
   "packages": [
-    "openvibe-contracts v0.222.0",
+    "openvibe-contracts v0.223.0",
     "openvibe-sdk v0.67.0",
     "openvibe-shared v4.19.0"
   ],
@@ -21,7 +21,10 @@
     "run.job.list",
     "run.job.cancel",
     "run.job.stream",
-    "run.job.admin"
+    "run.job.admin",
+    "run.session.create",
+    "run.session.read",
+    "run.session.control"
   ],
   "events": [
     "run.job.queued",
@@ -29,7 +32,9 @@
     "run.job.succeeded",
     "run.job.failed",
     "run.job.cancelled",
-    "run.job.expired"
+    "run.job.expired",
+    "run.session.started",
+    "run.session.ended"
   ],
   "deployed": true,
   "deployment": "openvibe-ovh: unit openvibe-run.service on 127.0.0.1:4920 since 2026-10-07 (release layout /opt/openvibe.run, env /etc/openvibe/run.env, database ov_run), deployed with `sudo ovhost deploy run`. The job API is reached by first-party callers on loopback; jobs are placed on people's own Bot nodes through Bot's internal jobs API (bot.job.dispatch). openvibe.run itself is parked (a 302 to openvibe.network) until Run has a product surface; the vhost in deploy/nginx/openvibe.run.conf is installed then. Its rules stay: /api/health, /api/ready, /release.json and the job API proxied, the client address from $remote_addr only, /internal/ and /metrics refused at the edge.",
