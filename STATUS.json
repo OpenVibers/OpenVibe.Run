@@ -9,11 +9,11 @@
   "domain": "openvibe.run",
   "contracts": "openvibe-contracts v0.222.0",
   "sdk": "openvibe-sdk v0.67.0",
-  "shared": "openvibe-shared v4.17.0",
+  "shared": "openvibe-shared v4.19.0",
   "packages": [
     "openvibe-contracts v0.222.0",
     "openvibe-sdk v0.67.0",
-    "openvibe-shared v4.17.0"
+    "openvibe-shared v4.19.0"
   ],
   "capabilities": [
     "run.job.submit",
@@ -53,5 +53,5 @@
     "plan T11 step 4 built, not deployed: /llms.txt and /llms-full.txt (server/web/discovery.js, public pages and docs only, never the API, admin, a job or a stream) and IndexNow (INDEXNOW_KEY: serves GET /<key>.txt and pings the public pages once at boot; unset, the key route is 404 and nothing is sent)",
     "a person's own machine (user-owned offer read from Network's internal list) runs only that person's jobs naming user-owned; a delegating service cancels and streams (by ticket) the jobs it started for a person"
   ],
-  "updated": "2026-10-27"
+  "updated": "2026-10-28"
 }
