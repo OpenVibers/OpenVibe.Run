@@ -111,6 +111,14 @@ function loadConfig(env = process.env) {
         // The dispatcher bridge to Bot (plan T14 step 6, R1c): Bot holds the node link and the per-second
         // metering; Run calls it as the service principal `svc:run` for audience openvibe.bot. Without
         // OV_OAUTH_CLIENT_SECRET Run cannot mint that token and nothing is sent (jobs stay queued).
+        // Run sessions (contracts 0.223.0, server/sessions/): one pass over the open ones every tickMs; a person holds at
+        // most maxOpen at once; a running one's lease is checked on Bot every leaseCheckMs.
+        sessions: {
+            tickMs: Math.max(200, int(env.RUN_SESSION_TICK_MS, 2000)),
+            maxOpen: Math.max(1, int(env.RUN_SESSIONS_PER_PERSON, 3)),
+            leaseCheckMs: Math.max(1000, int(env.RUN_SESSION_LEASE_CHECK_MS, 30000)),
+        },
+
         dispatch: {
             botUrl: trim(env.RUN_BOT_URL || 'http://127.0.0.1:4630'),
             botAudience: env.RUN_BOT_AUDIENCE || 'openvibe.bot',

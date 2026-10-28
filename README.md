@@ -122,6 +122,31 @@ refused like any other token without the grant.
 with the grant is refused. Every request body and query string is validated against its released contract, and so is
 every answer before it is sent; errors are RFC 9457 `application/problem+json`.
 
+## Sessions
+
+A session (contracts 0.223.0, the Desks plan's D6) is a browser desk Run places for one person and OpenVibe.Bot leases
+to it (`bot.desk.session`, `server/sessions/`). Unlike jobs, a session is a person's own: their Network token, or a
+first-party `svc:` token holding the capability and naming them in `X-OV-Subject` (recorded as `via`).
+
+| Method and path                         | Capability            | Request → answer |
+|-----------------------------------------|-----------------------|------------------|
+| `POST /api/v1/sessions`                 | `run.session.create`  | `run.session-create-request@1` → `run.session@1` (201; 200 on an idempotent repeat) |
+| `GET /api/v1/sessions?state=&limit=&cursor=` | `run.session.read` | → `run.session-list-result@1` (running ones by default) |
+| `GET /api/v1/sessions/:id`              | `run.session.read`    | → `run.session@1` |
+| `POST /api/v1/sessions/:id/commands`    | `run.session.control` | `run.session-control-request@1` (screen, input, browser) → `run.session-control-result@1` |
+| `POST /api/v1/sessions/:id/end`         | `run.session.control` | → `run.session@1`, ended |
+
+- **Placement.** The request's own `machine`, or nowhere. Otherwise the hosts Bot lists for the person: online with
+  room, in the trust classes the requirements allow (first-party, then community, by default; user-owned only when
+  the requirements name it), most free desks first. A full host is skipped; with none, the session waits `placing`
+  until its `ttl_s`, then ends `unplaceable`.
+- **Its life.** `ttl_s` (default 3600) bounds it. `idle_s` (default 900) without a command ends it. Every
+  `RUN_SESSION_LEASE_CHECK_MS` (30 s) Run asks Bot whether the desk is still leased: a host that dropped it ends the
+  session `host_lost`. A person holds `RUN_SESSIONS_PER_PERSON` (3) at once.
+- **Metering.** One `platform.usage-sample@1` per minute of desk time (`run:<session>:<minute>`, operation
+  `browser.desk`, the last one the remainder) in `run_usage_outbox`, posted to Billing by the usage relay.
+- **Events.** `run.session.started` and `run.session.ended`, in the transaction that records each.
+
 ## Jobs
 
 - **Submit.** `Idempotency-Key` (or `body.idempotency_key`) makes a retry safe; with neither, Run mints its own key
@@ -227,7 +252,7 @@ until Run has a product surface; the vhost below is installed then.
 | `STATUS.json` | What this repository is, what it does today and where it runs |
 
 <!-- versions:start -->
-- openvibe-contracts: v0.222.0
+- openvibe-contracts: v0.223.0
 - openvibe-sdk: v0.67.0
 - openvibe-shared: v4.19.0
 <!-- versions:end -->

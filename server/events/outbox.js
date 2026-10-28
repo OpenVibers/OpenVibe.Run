@@ -9,6 +9,8 @@
  *   run.job.failed      job_exit with another code, or reason limit, stopped or failed
  *   run.job.cancelled   POST /api/v1/jobs/:id/cancel, or job_exit reason cancelled
  *   run.job.expired     ttl_ms ran out (run.job.unplaceable or run.job.ttl)
+ *   run.session.started a session's desk answered (server/sessions/service.js)
+ *   run.session.ended   a session ended (ended, ttl, idle, host_lost, unplaceable or failed)
  *
  * A row is written inside the transaction that makes the change (jobs/events.js: the row is keyed by
  * `run:<job id>:<state>`, and it validates its envelope against events.event-envelope@1 and its payload
@@ -21,7 +23,8 @@ const { createServiceOutbox } = require('openvibe-sdk/events');
 
 const TABLE = 'run_events_outbox';   // migrations/0001_jobs.sql
 const ACTOR = { type: 'service', id: 'run' };
-const EVENT_TYPES = ['run.job.queued', 'run.job.started', 'run.job.succeeded', 'run.job.failed', 'run.job.cancelled', 'run.job.expired'];
+const EVENT_TYPES = ['run.job.queued', 'run.job.started', 'run.job.succeeded', 'run.job.failed', 'run.job.cancelled', 'run.job.expired',
+    'run.session.started', 'run.session.ended'];   // server/sessions/service.js (contracts 0.223.0)
 
 function createRunOutbox({ db, config, fetchImpl, now, log = console }) {
     return createServiceOutbox({

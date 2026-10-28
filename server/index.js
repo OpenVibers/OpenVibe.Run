@@ -34,7 +34,7 @@ async function main() {
     const valkey = createValkey({ url: config.valkey.url, prefix: config.valkey.prefix });
 
     const app = createApp({ config, db, valkey, registry });
-    const { keys, outbox, stream, tickets, dispatch, indexnow } = app.locals;
+    const { keys, outbox, stream, tickets, dispatch, indexnow, sessions } = app.locals;
     keys.start();
     const ticketKey = tickets.start();
 
@@ -44,11 +44,13 @@ async function main() {
         // credentials: start() then does nothing and every job stays queued.
         outbox.start();
         dispatch.start();
+        // Run sessions (server/sessions/): place, watch and meter the open ones. Off without the Bot token.
+        sessions.start();
     }
 
     const server = app.listen(config.port, config.host, () => {
         console.log(`[Run] ${config.nodeEnv} on http://${config.host}:${config.port} → ${config.baseUrl} (store ${db.store}; valkey ${valkey ? 'on' : 'off: this process only'})`);
-        console.log(`[Run] jobs ${config.jobs.enabled ? 'on' : 'off (RUN_JOBS=off)'}; events relay ${outbox.enabled ? `→ ${config.events.url}` : 'off (run.job.* events wait in the outbox)'}; stream tickets ${ticketKey.enabled ? `on (${config.stream.keyId}${ticketKey.ephemeral ? ', ephemeral key' : ''})` : 'off (no stream key)'}; dispatcher ${dispatch.enabled ? `on (poll ${config.dispatch.pollMs} ms): ${dispatch.note}` : `off: ${dispatch.note}`}; ${dispatch.status().usage_relay.note}`);
+        console.log(`[Run] jobs ${config.jobs.enabled ? 'on' : 'off (RUN_JOBS=off)'}; events relay ${outbox.enabled ? `→ ${config.events.url}` : 'off (run.job.* events wait in the outbox)'}; stream tickets ${ticketKey.enabled ? `on (${config.stream.keyId}${ticketKey.ephemeral ? ', ephemeral key' : ''})` : 'off (no stream key)'}; dispatcher ${dispatch.enabled ? `on (poll ${config.dispatch.pollMs} ms): ${dispatch.note}` : `off: ${dispatch.note}`}; ${dispatch.status().usage_relay.note}; ${sessions.status().note}`);
     });
     server.keepAliveTimeout = 65_000;
     // Request telemetry (openvibe-sdk/service, plan T1): one aggregated sample per route template, method and status
@@ -72,6 +74,7 @@ async function main() {
             () => keys.stop(),
             () => tickets.stop(),
             () => dispatch.stop(),
+            () => sessions.stop(),
             () => stream.close(),
             () => outbox.stop(),
         ],
