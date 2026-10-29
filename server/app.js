@@ -117,22 +117,37 @@ function createApp(opts = {}) {
         catch (err) { log.warn(`[Run] IndexNow disabled: ${err.message}`); indexnow = createIndexNow({ host: config.baseUrl, key: '' }); }
     }
     if (indexnow.enabled) app.use(indexnow.keyFile);
-    app.get('/', (req, res) => {
+    // The public page names its Markdown twin in a Link header (the twin is served by the agent layer below); a
+    // request that asks for the twin itself (?format=markdown, Accept: text/markdown) falls through to it.
+    const agentLinks = (path) => require('openvibe-shared/agent-layer').linkHeaderTags(`${config.baseUrl}${path}`, `${config.baseUrl}/llms.txt`).header;
+    const wantsTwin = (req) => req.query.format === 'markdown' || req.accepts(['html', 'text/markdown']) === 'text/markdown';
+    app.get('/', (req, res, next) => {
+        if (wantsTwin(req)) return next();
         res.setHeader('Content-Security-Policy', home.HOME_CSP);
         res.setHeader('Cache-Control', 'public, max-age=300');
+        res.setHeader('Link', agentLinks('/'));
         res.type('html').send(home.renderHome({ config }));
     });
     // What shipped on this site: the shared update log, as on every OpenVibe site.
-    app.get('/updates', (req, res) => {
+    app.get('/updates', (req, res, next) => {
+        if (wantsTwin(req)) return next();
         res.setHeader('Content-Security-Policy', home.HOME_CSP);
         res.setHeader('Cache-Control', 'public, max-age=300');
+        res.setHeader('Link', agentLinks('/updates'));
         res.type('html').send(home.renderUpdates({ config }));
     });
     { const legal = require('openvibe-shared/legal');
       app.get(legal.PATHS, (req, res, next) => { res.setHeader('Content-Security-Policy', home.HOME_CSP); next(); }, legal.handler({ id: 'run', service: 'run', host: 'openvibe.run', name: home.SITE_NAME, profile: 'hosting' })); }
+    // The agent layer (openvibe-shared/agent-layer): /.well-known/agent.json, and the Markdown twins of the home
+    // and the update log. Mounted after the page routes, so a browser keeps this site's own page (which names the
+    // twin) and only a twin request reaches this renderer; before the fallback, so an unknown .md is a 404.
+    require('openvibe-shared/agent-layer').mount(app, {
+        descriptor: require('./agent-descriptor'),
+        render: require('./agent-pages').createAgentPages({ config }).renderPublicPage,
+    });
     app.get('/llms.txt', (req, res) => res.type('text/plain').set('Cache-Control', 'public, max-age=3600').send(discovery.llmsTxt(config)));
     app.get('/llms-full.txt', (req, res) => res.type('text/plain').set('Cache-Control', 'public, max-age=3600').send(discovery.llmsFull(config)));
-    app.get('/robots.txt', (req, res) => res.type('text/plain').send(['User-agent: *', 'Allow: /$', 'Disallow: /api/', 'Disallow: /internal/', `Sitemap: ${config.baseUrl}/sitemap.xml`, ''].join('\n')));
+    app.get('/robots.txt', (req, res) => res.type('text/plain').send(['User-agent: *', 'Allow: /$', 'Disallow: /api/', 'Disallow: /internal/', `# Agent manifest: ${config.baseUrl}/.well-known/agent.json`, `Sitemap: ${config.baseUrl}/sitemap.xml`, ''].join('\n')));
     app.get('/sitemap.xml', (req, res) => res.type('application/xml').send(require('openvibe-shared/seo').sitemapXml(discovery.PAGES.map((p) => ({ loc: `${config.baseUrl}${p}` })))));
     app.get('/favicon.ico', (req, res) => res.type('image/svg+xml').set('Cache-Control', 'public, max-age=86400').send(appIcon.favicon({ site: 'run' })));
     // The web app manifest. Its icons are the shared set (openvibe-shared/app-icons, under /shared/icons): it named
