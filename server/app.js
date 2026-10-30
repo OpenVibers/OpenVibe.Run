@@ -157,6 +157,11 @@ function createApp(opts = {}) {
         icons: [192, 512].flatMap((s) => [false, true].map((maskable) => ({ src: require('openvibe-shared/app-icons').url('run', s, { maskable }), sizes: `${s}x${s}`, type: 'image/png', purpose: maskable ? 'maskable' : 'any' }))),
     })));
 
+    // The account export and deletion consumer (ADR-033, server/account-data.js): the two account topics, signed
+    // and loopback only. It answers the raw body (the v2 signature covers it), so no body parser may run before it:
+    // it is mounted here, before the catch-all below, which would otherwise answer every /internal/ request.
+    if (opts.accountData) app.post('/internal/events', opts.accountData.consumer({ secrets: [config.events.secret].filter((s) => s.length >= 32), send: opts.accountSend || null }));
+
     app.use((req, res) => {
         if (req.path.startsWith('/api/') || req.path.startsWith('/internal/')) return http.sendProblem(res, 404, 'not_found', { ctx: req.ov });
         return res.status(404).type('text/plain').send('Not found\n');
