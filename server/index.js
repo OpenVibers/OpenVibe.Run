@@ -24,6 +24,8 @@ const { createValkey } = require('openvibe-sdk/valkey');
 const { gracefulStop, telemetry } = require('openvibe-sdk/service');
 const { createPgTelemetrySink, startTelemetryRetention } = require('openvibe-sdk/telemetry');
 const { createRegistry } = require('openvibe-shared/metrics');
+const accountDataLib = require('./account-data');
+const { createNetworkSender, startSubscriptions } = require('openvibe-sdk/account-data');
 
 async function main() {
     const config = loadConfig();
@@ -33,6 +35,8 @@ async function main() {
     if (m.held.length) console.warn(`[Run] migrations held: ${m.held.map((h) => `${h.id} (${h.reason})`).join('; ')}`);
     const valkey = createValkey({ url: config.valkey.url, prefix: config.valkey.prefix });
 
+    const accountData = accountDataLib.create({ db, log: console });
+    const accountSend = config.oauth.clientSecret ? createNetworkSender({ networkInternalUrl: config.network.internalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret }) : null;
     const app = createApp({ config, db, valkey, registry });
     const { keys, outbox, stream, tickets, dispatch, indexnow, sessions } = app.locals;
     keys.start();
@@ -48,8 +52,16 @@ async function main() {
         sessions.start();
     }
 
+    app.post('/internal/events', accountData.consumer({ secrets: [config.events.secret].filter((s) => s.length >= 32), send: accountSend }));
+    let accountSubscription = null;
     const server = app.listen(config.port, config.host, () => {
         console.log(`[Run] ${config.nodeEnv} on http://${config.host}:${config.port} → ${config.baseUrl} (store ${db.store}; valkey ${valkey ? 'on' : 'off: this process only'})`);
+        if (config.events.secret.length >= 32 && config.events.url) {
+            accountSubscription = startSubscriptions({
+                eventsUrl: config.events.url, endpoint: `http://127.0.0.1:${config.port}/internal/events`, secret: config.events.secret,
+                networkInternalUrl: config.network.internalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret,
+            });
+        }
         console.log(`[Run] jobs ${config.jobs.enabled ? 'on' : 'off (RUN_JOBS=off)'}; events relay ${outbox.enabled ? `→ ${config.events.url}` : 'off (run.job.* events wait in the outbox)'}; stream tickets ${ticketKey.enabled ? `on (${config.stream.keyId}${ticketKey.ephemeral ? ', ephemeral key' : ''})` : 'off (no stream key)'}; dispatcher ${dispatch.enabled ? `on (poll ${config.dispatch.pollMs} ms): ${dispatch.note}` : `off: ${dispatch.note}`}; ${dispatch.status().usage_relay.note}; ${sessions.status().note}`);
     });
     server.keepAliveTimeout = 65_000;
@@ -77,6 +89,7 @@ async function main() {
             () => sessions.stop(),
             () => stream.close(),
             () => outbox.stop(),
+            () => { if (accountSubscription) accountSubscription.stop(); },
         ],
         close: [
             async () => { if (telemetryRetention) await telemetryRetention.stop(); await telemetry.stop(); },
