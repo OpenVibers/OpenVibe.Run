@@ -74,6 +74,9 @@ function loadConfig(env = process.env) {
         events: {
             url: trim(env.EVENTS_URL || ''),
             intervalMs: int(env.EVENTS_RELAY_INTERVAL_MS, 2000),
+            // The account-data consumer (POST /internal/events): the signing secret Network's deliveries use. Unset:
+            // the route is off and Network's account export/deletion does not wait for Run.
+            secret: String(env.RUN_EVENTS_SECRET || '').trim(),
         },
 
         // The background jobs (the events relay and the dispatcher poller); RUN_JOBS=off runs the API alone,
