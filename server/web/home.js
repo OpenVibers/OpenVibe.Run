@@ -44,7 +44,8 @@ const HOME_CSP = [
 // The questions' cards, in the kit's tokens (the home has no stylesheet of its own).
 const FAQ_CSS = '<style>.run-faq{border:1px solid var(--border,#1f2d47);border-radius:10px;padding:4px 16px;margin:8px 0;background:var(--bg-card,#131c2e)}'
     + '.run-faq[open]{padding-bottom:12px}.run-faq summary{cursor:pointer;font-weight:600;padding:8px 0}'
-    + '.run-faq p{margin:4px 0 0;color:var(--text-secondary,#96a7c2)}</style>';
+    + '.run-faq p{margin:4px 0 0;color:var(--text-secondary,#96a7c2)}'
+    + '@media (pointer: coarse){.run-faq summary{min-height:44px;box-sizing:border-box}}</style>';
 
 const code = (s) => `<code>${s.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</code>`;
 
