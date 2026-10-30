@@ -9,11 +9,11 @@
   "domain": "openvibe.run",
   "contracts": "openvibe-contracts v0.250.0",
   "sdk": "openvibe-sdk v0.74.0",
-  "shared": "openvibe-shared v4.52.0",
+  "shared": "openvibe-shared v4.53.0",
   "packages": [
     "openvibe-contracts v0.250.0",
     "openvibe-sdk v0.74.0",
-    "openvibe-shared v4.52.0"
+    "openvibe-shared v4.53.0"
   ],
   "capabilities": [
     "run.job.submit",
