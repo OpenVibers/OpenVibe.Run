@@ -16,7 +16,6 @@ const B = 'usr_01JZ0000000000000000000BBB';
     const d = await testDb();
     try {
         const accountData = create({ db: d.db });
-        await accountData.ensureSchema();
         const missing = await uncovered(d.db, { tables: [...TABLES, 'run_jobs'], exempt: { account_data_events: 'the ledger of requests itself: which export and deletion Run applied' } });
         assert.deepStrictEqual(missing, [], `a table with a person column is neither covered nor exempted: ${missing.join(', ')}`);
 

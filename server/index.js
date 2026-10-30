@@ -36,7 +36,6 @@ async function main() {
     const valkey = createValkey({ url: config.valkey.url, prefix: config.valkey.prefix });
 
     const accountData = accountDataLib.create({ db, log: console });
-    await accountData.ensureSchema();
     const accountSend = config.oauth.clientSecret ? createNetworkSender({ networkInternalUrl: config.network.internalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret }) : null;
     const app = createApp({ config, db, valkey, registry });
     const { keys, outbox, stream, tickets, dispatch, indexnow, sessions } = app.locals;
