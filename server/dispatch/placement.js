@@ -83,9 +83,9 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
         : null;
     let owned = { at: 0, offers: [] };
     /** Every live user-owned node offer that names its owner, from the internal list, cached like the public ones. */
-    async function ownedOffers() {
+    async function ownedOffers({ maxAgeMs = offersTtlMs } = {}) {
         if (!registryTokens) return [];
-        if (owned.at && now() - owned.at < offersTtlMs) return owned.offers;
+        if (owned.at && now() - owned.at < maxAgeMs) return owned.offers;
         const href = `${config.network.internalUrl}/internal/resources?kind=node&trust=user-owned`;
         let res;
         try {
@@ -110,9 +110,9 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
     }
 
     /** The published offers of one kind, cached briefly. A Network that does not answer is a retryable error. */
-    async function offers(kind = 'node') {
+    async function offers(kind = 'node', { maxAgeMs = offersTtlMs } = {}) {
         const cache = caches.get(kind) || { at: 0, offers: [], fetched: 0 };
-        if (cache.at && now() - cache.at < offersTtlMs) return cache.offers;
+        if (cache.at && now() - cache.at < maxAgeMs) return cache.offers;
         const href = offersUrlOf(kind);
         let res;
         try {
@@ -140,11 +140,50 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
     }
 
     /**
+     * Whether a job may be pinned to this machine now (Codes C9c): a machine of the requester's own (a user-owned
+     * offer names them), advertising the class, and up. Run refuses a pinned job when it is not — never places it
+     * somewhere else. A caller at submit asks with fresh: true (one read, not the poller's cached one); the
+     * placement loop asks from its cache, and a machine that went offline between the two simply keeps the job
+     * queued here until it is back or the job's ttl runs out.
+     *
+     * @returns {Promise<{ok: boolean, offer?: object, code?: string, detail?: string}>}
+     */
+    async function pinStatus(nodeId, runtimeClass, requester = null, { fresh = false } = {}) {
+        const want = workerCapability(runtimeClass);
+        if (!/^dev_[0-9A-HJKMNP-TV-Z]{26}$/.test(String(nodeId || ''))) {
+            return { ok: false, code: 'run.job.node_offline', detail: 'node must be a machine id (dev_…)' };
+        }
+        const age = fresh ? 0 : offersTtlMs;
+        const offer = [...(await offers('node', { maxAgeMs: age })), ...(await ownedOffers({ maxAgeMs: age }))]
+            .find((o) => o && o.kind === 'node' && o.node_id === nodeId);
+        if (!offer) return { ok: false, code: 'run.job.node_offline', detail: `machine ${nodeId} is not connected to Run` };
+        if (offer.trust === 'user-owned') {
+            const person = personOf(requester);
+            if (!person || offer.owner !== person) return { ok: false, code: 'run.job.node_offline', detail: `machine ${nodeId} is not one of yours` };
+        }
+        if (!(offer.capabilities || []).includes(want)) return { ok: false, code: 'run.job.worker_failed', detail: `machine ${nodeId} does not run ${runtimeClass} jobs` };
+        if (!offer.health || offer.health.status !== 'up') return { ok: false, code: 'run.job.node_offline', detail: `machine ${nodeId} is not connected` };
+        return { ok: true, offer };
+    }
+
+    /**
      * The node to run this job on, or null when no offer is eligible. The requirements are the job's own
-     * (the contract's default was filled in at submit), plus the class it runs.
+     * (the contract's default was filled in at submit), plus the class it runs. A job that names a machine
+     * (Codes C9c) is placed only there: the placer is not asked, and a machine that is not usable is an error,
+     * never a quieter placement somewhere else.
      */
     async function choose(row) {
         const want = workerCapability(row.class);
+        const pinned = typeof obj(row.job).node === 'string' ? obj(row.job).node : null;
+        if (pinned) {
+            const status = await pinStatus(pinned, row.class, row.requester);
+            if (!status.ok) throw new PlacementError(status.code, status.detail, { retryable: status.code === 'run.job.node_offline' });
+            const o = status.offer;
+            return {
+                node_id: o.node_id, provider: o.provider ?? null, region: o.region ?? null, kind: o.kind,
+                offer_id: o.offer_id, trust: o.trust, reasons: [`pinned to ${o.node_id}`],
+            };
+        }
         const requirements = { ...obj(row.job).requirements || requirementsDefault(row.class) };
         const userOwnedNamed = Array.isArray(requirements.trust) && requirements.trust.includes('user-owned');
         // A user-owned offer is a person's own machine: eligible only for that person's own job, and only when the job
@@ -186,6 +225,7 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
 
     return {
         choose,
+        pinStatus,
         offers,
         workerCapability,
         status: () => {

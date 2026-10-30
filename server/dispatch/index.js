@@ -81,6 +81,9 @@ function createDispatcher({ config = null, db = null, store = null, events = nul
 
     return {
         enabled, note, place, cancel, poll, sweep,
+        // Codes C9c: may this job run pinned to that machine now? → { ok, offer? , code?, detail? }; throws when
+        // Network cannot be read (the caller answers 503, never a guessed offline).
+        pinStatus: (nodeId, runtimeClass, requester, opts) => placer.pinStatus(nodeId, runtimeClass, requester, opts),
         start: () => { relay.start(); return poller.start(); },
         stop: () => { poller.stop(); return relay.stop(); },
         status: () => ({
