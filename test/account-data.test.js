@@ -3,10 +3,14 @@
  * ADR-033: Run's part of an account export and deletion. A person's open browser sessions are exported (their
  * settings and timing, never a ticket) and deleted; someone else's stay. The guard fails when a new table with a
  * person column is neither covered nor exempted with a reason.
+ *
+ * The consumer's route is checked too: POST /internal/events answers the delivery (a bad signature is refused),
+ * so a route that never answers is caught here and not in production.
  */
 const assert = require('assert');
 const { uncovered } = require('openvibe-sdk/account-data');
 const { testDb } = require('./helpers/db');
+const { boot } = require('./helpers/app');
 const { TABLES, create } = require('../server/account-data');
 
 const A = 'usr_01JZ0000000000000000000AAA';
@@ -41,6 +45,12 @@ const B = 'usr_01JZ0000000000000000000BBB';
         assert.strictEqual(await d.db.value('SELECT requester FROM run_jobs WHERE id = $1', ['job_01JZ0000000000000000000ADA']), 'user:deleted', 'the job stays, without its requester');
         assert.strictEqual(await d.db.value('SELECT requester FROM run_jobs WHERE id = $1', ['job_01JZ0000000000000000000BQB']), `user:${B}`, 'Bo\'s job is untouched');
         assert.strictEqual(counts.retained.run_jobs_tombstoned, 1);
-        console.log('  ✓ export, erase and the guard');
+
+        // The route answers: an unsigned delivery is refused (401), not lost (404) and not accepted.
+        const t = await boot({ db: d.db, env: { RUN_EVENTS_SECRET: 's'.repeat(40) }, appOpts: { accountData } });
+        const r = await t.call('POST', '/internal/events', { body: {}, token: null });
+        assert.strictEqual(r.status, 401, `the consumer refuses an unsigned delivery: ${r.text}`);
+        await t.close();
+        console.log('  ✓ export, erase, the guard and the route');
     } finally { await d.close(); }
 })();

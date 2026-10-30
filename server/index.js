@@ -37,7 +37,7 @@ async function main() {
 
     const accountData = accountDataLib.create({ db, log: console });
     const accountSend = config.oauth.clientSecret ? createNetworkSender({ networkInternalUrl: config.network.internalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret }) : null;
-    const app = createApp({ config, db, valkey, registry });
+    const app = createApp({ config, db, valkey, registry, accountData, accountSend });
     const { keys, outbox, stream, tickets, dispatch, indexnow, sessions } = app.locals;
     keys.start();
     const ticketKey = tickets.start();
@@ -52,7 +52,6 @@ async function main() {
         sessions.start();
     }
 
-    app.post('/internal/events', accountData.consumer({ secrets: [config.events.secret].filter((s) => s.length >= 32), send: accountSend }));
     let accountSubscription = null;
     const server = app.listen(config.port, config.host, () => {
         console.log(`[Run] ${config.nodeEnv} on http://${config.host}:${config.port} → ${config.baseUrl} (store ${db.store}; valkey ${valkey ? 'on' : 'off: this process only'})`);
