@@ -144,6 +144,14 @@ function v1Router({ config, db, apiAuth, stream, tickets, events, dispatch, now 
         const { project: projectId, requester, via } = apiAuth.requireProject(req, { delegated: true });
         const body = validCreate(req.body);
         checkLimits(body, config.limits);
+        // A pinned machine (Codes C9c): the job is refused now when it is not connected, never placed on another one.
+        if (body.node) {
+            let pin;
+            try { pin = await dispatch.pinStatus(body.node, body.class, requester, { fresh: true }); } catch (e) {
+                fail(503, 'run.dispatch.no_offers', `Run could not read which machines are connected (${e.code || e.message})`);
+            }
+            if (!pin.ok) fail(pin.code === 'run.job.node_offline' ? 409 : 422, pin.code, pin.detail);
+        }
         const key = idempotencyKey(req, body);
         const at = now();
         const out = await db.tx(async (t) => {

@@ -432,6 +432,71 @@ async function main() {
             bot.devices.delete(OTHER_DEVICE);
         });
 
+        await check('a pinned machine (Codes C9c): placed only there, refused when it is offline, never moved', async () => {
+            const ada = ids.newId('user');
+            const bo = ids.newId('user');
+            const P = PROJECT();
+            const PINNED = `dev_${ids.ulid()}`;    // Bot's own id for a device (Run's placement node_id)
+            const ELSEWHERE = `dev_${ids.ulid()}`;
+            t.network.members.set(`${P} ${ada}`, { role: 'owner' });
+            t.network.members.set(`${P} ${bo}`, { role: 'owner' });
+            bot.devices.set(PINNED, { classes: ['function'] });
+            const mine = offer({ offer_id: 'off_mine', trust: 'user-owned', owner: ada, provider: 'self', node_id: PINNED });
+            const elsewhere = offer({ offer_id: 'off_other', node_id: ELSEWHERE });
+            t.setOffers([elsewhere, mine]);
+            const asAda = async (over, key = null) => t.call('POST', '/api/v1/jobs', {
+                body: t.request(over), key,
+                token: t.network.signService({ sub: 'svc:codes', cap: ['run.job.submit', 'run.job.read'] }),
+                headers: { 'X-OV-Subject': ada, 'X-OV-Project': P },
+            });
+
+            // Ada's own machine: created, kept on the job record, and placed there — not on the first-party offer.
+            const pinned = await asAda({ node: PINNED });
+            assert.strictEqual(pinned.status, 201, pinned.text);
+            const stored = await t.db.maybe('SELECT job FROM run_jobs WHERE id = $1', [pinned.json.job.id]);
+            assert.strictEqual(stored.job.node, PINNED);
+            const placed = (await t.dispatch.poll()).find((a) => a.job_id === pinned.json.job.id);
+            assert.strictEqual(placed.state, 'placed');
+            assert.strictEqual(placed.node_id, PINNED);
+            assert.strictEqual(bot.jobs.get(pinned.json.job.id).job.node, undefined, 'node is Run\'s, never a platform.job@1 field');
+
+            // Offline: refused now, and nothing is stored.
+            const before = Number((await t.db.maybe('SELECT count(*) AS n FROM run_jobs')).n);
+            t.setOffers([elsewhere]);
+            const offline = await asAda({ node: PINNED });
+            assert.strictEqual(offline.status, 409, offline.text);
+            assert.strictEqual(offline.json.code, 'run.job.node_offline');
+            assert.strictEqual(Number((await t.db.maybe('SELECT count(*) AS n FROM run_jobs')).n), before, 'a refused pin stores no job');
+
+            // Someone else's machine is never pinnable, and a class it does not run is a plain refusal.
+            t.setOffers([elsewhere, offer({ offer_id: 'off_mine', trust: 'user-owned', owner: bo, node_id: PINNED })]);
+            assert.strictEqual((await asAda({ node: PINNED })).json.code, 'run.job.node_offline');
+            t.setOffers([elsewhere, mine]);
+            const wrongClass = await asAda({ class: 'code', artifact: { name: 'openvibe-codes', version: '1.0.0' }, node: PINNED });
+            assert.strictEqual(wrongClass.status, 422, wrongClass.text);
+            assert.strictEqual(wrongClass.json.code, 'run.job.worker_failed');
+
+            // Pinned, then the machine goes down before placement: the job waits, and is never moved to the other one.
+            const later = await asAda({ node: PINNED });
+            assert.strictEqual(later.status, 201, later.text);
+            t.setOffers([elsewhere, { ...mine, health: { status: 'down', checked_at: new Date().toISOString() } }]);
+            const waiting = (await t.dispatch.poll()).find((a) => a.job_id === later.json.job.id);
+            assert.strictEqual(waiting.state, 'queued', 'a pinned job never lands on another machine');
+
+            // The pin is part of the request an idempotency key answers for.
+            t.setOffers([elsewhere, mine]);
+            const keyed = await asAda({ node: PINNED }, 'pin:c9c');
+            assert.strictEqual(keyed.status, 201);
+            assert.strictEqual((await asAda({ node: PINNED }, 'pin:c9c')).status, 200, 'the same request answers the first job');
+            const changed = await asAda({}, 'pin:c9c');
+            assert.strictEqual(changed.status, 409);
+            assert.strictEqual(changed.json.code, 'run.idempotency.conflict');
+
+            await t.db.exec(`UPDATE run_jobs SET created_at = created_at - 100000000 WHERE state = 'queued'`);
+            await t.dispatch.sweep();
+            bot.devices.delete(PINNED);
+        });
+
         await check('a job cancelled while its frame is in flight is not placed, and Bot is told to stop it', async () => {
             t.setOffers([offer()]);
             const project = PROJECT();

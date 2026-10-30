@@ -66,6 +66,9 @@ function recordOf(row) {
         ttl_ms: Number(row.ttl_ms),
         egress: job.net ?? 'none',
         requirements: job.requirements ?? requirementsDefault(row.class),
+        // A pinned machine (Codes C9c): part of what an idempotent repeat is compared on, so a repeat that adds or
+        // drops the pin with the same key is a different request, never silently the first job.
+        node: job.node ?? null,
     };
 }
 
@@ -85,6 +88,8 @@ function normalize(body, { projectId, requester, via = null, idempotencyKey, now
         net: body.egress || 'none',
         inputs: body.inputs || [],
         requirements: body.requirements || requirementsDefault(body.class),
+        // The machine the caller pinned (Codes C9c): kept on the job record, never in the platform.job@1 frame.
+        ...(body.node ? { node: body.node } : {}),
     };
     // The platform.job@1 body the node will be sent (frameOf drops requirements — platform.job@1 has no
     // field for it), validated here once so a node can never be handed something off-contract.
