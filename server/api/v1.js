@@ -185,7 +185,7 @@ function v1Router({ config, db, apiAuth, stream, tickets, events, dispatch, now 
         // one line saying why rides beside it when the caller asks with ?explain=1.
         const job = store.readResult(row);
         if (req.query.explain !== '1') return res.json(job);
-        res.json({ ...job, explain: row.placement_explain ? { line: row.placement_line || row.placement_explain.line, ranked: row.placement_explain.ranked || [], rejected: row.placement_explain.rejected || [] } : null });
+        res.json({ ...job, explain: row.placement_explain ? { line: row.placement_line || row.placement_explain.line, ranked: row.placement_explain.ranked || [], rejected: row.placement_explain.rejected || [], others_hidden: Number(row.placement_explain.others_hidden) || 0 } : null });
     }));
 
     // ── POST /jobs/:id/cancel — run.job.cancel ─────────────────────────────────

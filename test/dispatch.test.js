@@ -462,7 +462,25 @@ async function main() {
             const explained = await t.call('GET', `/api/v1/jobs/${mine.job_id}?explain=1`, { token, headers: { 'X-OV-Subject': ada, 'X-OV-Project': P } });
             assert.strictEqual(explained.status, 200, explained.text);
             assert.ok(explained.json.explain && typeof explained.json.explain.line === 'string' && explained.json.explain.line.length > 0, explained.text);
+            assert.ok(explained.json.explain.line.includes('your machine'), explained.json.explain.line);
+            assert.ok(!explained.json.explain.line.includes('off_learn_a'), 'the line never shows a raw offer id');
             assert.ok(Array.isArray(explained.json.explain.ranked));
+            assert.strictEqual(explained.json.explain.others_hidden, 0);
+            const storedExplain = await t.db.value('SELECT placement_explain FROM run_jobs WHERE id = $1', [mine.job_id]);
+            assert.strictEqual(Number(storedExplain.others_hidden), 0);
+            assert.ok(!JSON.stringify(storedExplain).includes("another person's machine"), 'the stored explain never lists another machine');
+            // Another person's machine is never listed, only counted.
+            const { publicExplain, displayNameOf } = require('../server/dispatch/placement');
+            assert.strictEqual(displayNameOf({ offer_id: 'off_named', trust: 'user-owned', owner: ada, detail: { name: 'Ada laptop' } }, ada), 'Ada laptop');
+            assert.strictEqual(displayNameOf({ offer_id: 'off_named', trust: 'third-party', provider: 'ovh' }, ada), 'ovh');
+            const hidden = publicExplain({ line: 'x', ranked: [], rejected: [
+                { id: 'off_other', why: "another person's machine" },
+                { id: 'off_none', why: 'a user-owned machine has no owner' },
+                { id: 'off_down', why: 'health down' },
+            ] });
+            assert.deepStrictEqual(hidden.rejected, [{ id: 'off_down', why: 'health down' }]);
+            assert.strictEqual(hidden.others_hidden, 2);
+            assert.ok(!JSON.stringify(hidden).includes('off_other') && !JSON.stringify(hidden).includes('off_none'));
             const { explain: _explain, ...contractBody } = explained.json;
             assert.ok(contracts.validate('run.job-read-result@1', contractBody).valid, 'the contract body is unchanged beside explain');
             bot.start(mine.job_id);
