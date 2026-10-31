@@ -262,12 +262,18 @@ async function mirror(db, id, bot = {}, at) {
              usage_read = GREATEST(usage_read, COALESCE($12, 0)),
              job = CASE WHEN $13::bigint IS NULL OR job ? 'placed_at' THEN job
                         ELSE jsonb_set(job, '{placed_at}', to_jsonb($13::bigint)) END,
+             placement_line = COALESCE($15, placement_line),
+             placement_option_key = COALESCE($16, placement_option_key),
+             placement_step_kind = COALESCE($17, placement_step_kind),
+             placement_explain = COALESCE($18::jsonb, placement_explain),
              updated_at = $14
          WHERE id = $1 RETURNING *`,
         [id, bot.state ?? null, bot.node_id ?? null, bot.provider ?? null, bot.region ?? null, bot.started_ms ?? null,
             bot.finished_at ?? null, bot.exit_reason ?? null, bot.exit_code ?? null,
             bot.result === undefined || bot.result === null ? null : JSON.stringify(bot.result),
-            bot.wall_ms ?? null, bot.usage_read ?? null, placed, at]);
+            bot.wall_ms ?? null, bot.usage_read ?? null, placed, at,
+            bot.placement_line ?? null, bot.placement_option_key ?? null, bot.placement_step_kind ?? null,
+            bot.placement_explain === undefined || bot.placement_explain === null ? null : JSON.stringify(bot.placement_explain)]);
 }
 
 /**

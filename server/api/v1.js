@@ -181,7 +181,11 @@ function v1Router({ config, db, apiAuth, stream, tickets, events, dispatch, now 
     r.get('/jobs/:id', guard('run.job.read'), wrap(async (req, res) => {
         const row = await getJob(req, req.params.id, { delegated: true });
         if (!row) fail(404, 'run.job_not_found', 'no such job');
-        res.json(store.readResult(row));
+        // Placement A1: the default answer is exactly run.job-read-result@1 (its contract forbids extra fields), so the
+        // one line saying why rides beside it when the caller asks with ?explain=1.
+        const job = store.readResult(row);
+        if (req.query.explain !== '1') return res.json(job);
+        res.json({ ...job, explain: row.placement_explain ? { line: row.placement_line || row.placement_explain.line, ranked: row.placement_explain.ranked || [], rejected: row.placement_explain.rejected || [], others_hidden: Number(row.placement_explain.others_hidden) || 0 } : null });
     }));
 
     // ── POST /jobs/:id/cancel — run.job.cancel ─────────────────────────────────

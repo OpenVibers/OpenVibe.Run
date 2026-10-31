@@ -39,7 +39,7 @@
  * a ring Bot dropped past Run's cursor is a gap Run drops rather than a duplicate Run invents.
  */
 const contracts = require('openvibe-contracts');
-const { workerCapability, EXTERNAL_PROVIDERS } = require('../dispatch/placement');
+const { workerCapability, EXTERNAL_PROVIDERS, personOf } = require('../dispatch/placement');
 const { PROVIDER: BROWSER_PROVIDER, METER_SLACK_MS } = require('../dispatch/browser-provider');
 const usage = require('./usage');
 
@@ -59,7 +59,7 @@ const RUN_STATE_OF = { queued: 'placed', running: 'running', succeeded: 'succeed
  * is ever routed to it); `usageRelay` is kicked after readings commit. Every dependency is injected; nothing here
  * starts at module load.
  */
-function createPoller({ config, db, store, events, stream, bot, provider = null, usageRelay = null, placement, now = () => Date.now(), log = console } = {}) {
+function createPoller({ config, db, store, events, stream, bot, provider = null, usageRelay = null, placement, outcomes = null, now = () => Date.now(), log = console } = {}) {
     const cancelSent = new Set();   // job ids whose job_cancel reached Bot in this process
     const unknown = new Map();      // job id → consecutive polls Bot answered 404 for
     const cursors = new Map();      // job id → how much of Bot's stdout ring Run has streamed
@@ -114,8 +114,32 @@ function createPoller({ config, db, store, events, stream, bot, provider = null,
             if (state === 'expired') stat.expired++;
             forget(row.id);
             stream.state(row.id, state, at);
+            await recordOutcome(settled.row);
         }
         return settled;
+    }
+
+    /**
+     * Learn one ended job (placement A1): ok means it finished and its exit was 0; a failure, a ttl or a person's
+     * cancel is false; a cancelled job is not counted at all. placement_recorded fences a redelivered end, so one job
+     * is learned once. Only a job a person requested has a person to learn for.
+     */
+    async function recordOutcome(row) {
+        if (!outcomes || !row || !row.placement_option_key || !row.placement_step_kind) return row;
+        const claimed = await db.maybe(
+            'UPDATE run_jobs SET placement_recorded = true WHERE id = $1 AND placement_recorded = false RETURNING *',
+            [row.id],
+        );
+        if (!claimed) return row;
+        if (row.state === 'cancelled') return row;
+        const person = personOf(row.requester);
+        if (!person) return row;
+        try {
+            await outcomes.record({ person, key: row.placement_option_key, kind: row.placement_step_kind, ok: row.state === 'succeeded', at: now() });
+        } catch (e) {
+            log.warn(`[Run] placement outcome for job ${row.id} was not recorded: ${String((e && e.message) || e).slice(0, 200)}`);
+        }
+        return row;
     }
 
     const fail = (row, at, errorCode, detail) => end(row, at, { state: 'failed', errorCode, errorDetail: detail ? String(detail).slice(0, 1024) : null })
@@ -282,7 +306,13 @@ function createPoller({ config, db, store, events, stream, bot, provider = null,
         const placed = await db.tx(async (t) => {
             const fresh = await store.get(t, row.id);
             if (!fresh || fresh.state !== 'queued') return null;
-            return store.mirror(t, row.id, { state: 'placed', node_id: chosen.node_id, provider: chosen.provider, region: chosen.region }, sentAt);
+            return store.mirror(t, row.id, {
+                state: 'placed', node_id: chosen.node_id, provider: chosen.provider, region: chosen.region,
+                placement_line: chosen.explain ? chosen.explain.line : null,
+                placement_option_key: chosen.option_key || null,
+                placement_step_kind: chosen.step_kind || row.class,
+                placement_explain: chosen.explain || null,
+            }, sentAt);
         });
         unconfirmed.delete(row.id);
         if (!placed) {
@@ -370,6 +400,7 @@ function createPoller({ config, db, store, events, stream, bot, provider = null,
                 if (moved === 'failed') stat.failed++;
                 forget(row.id);
                 stream.state(row.id, moved, at);
+                await recordOutcome(settled.row);
             }
             return note(row.id, moved, { changed: settled.changed, exit: b.exit_reason ?? null });
         }
@@ -457,6 +488,7 @@ function createPoller({ config, db, store, events, stream, bot, provider = null,
                 if (moved === 'failed') stat.failed++;
                 forget(row.id);
                 stream.state(row.id, moved, at);
+                await recordOutcome(settled.row);
             }
             return note(row.id, moved, { changed: settled.changed, exit: p.exit_reason ?? null, wall_ms: m.wallMs, clamped: m.clamped || undefined });
         }

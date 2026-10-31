@@ -39,7 +39,7 @@
  * answer with no eligible candidate is null, which the poller settles run.job.unplaceable.
  */
 const contracts = require('openvibe-contracts');
-const { plan } = require('openvibe-sdk/placement');
+const { place, optionKey } = require('openvibe-sdk/placement');
 const { createServiceTokenClient } = require('openvibe-sdk/auth');
 const { requirementsDefault } = require('../util');
 const { PROVIDER: BROWSER_PROVIDER } = require('./browser-provider');
@@ -61,6 +61,44 @@ class PlacementError extends Error {
 }
 
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+
+/**
+ * The reasons place() gives for excluding a user-owned machine that is not this job's person. Run's public answer
+ * never lists other people's machines, so those entries are dropped and only a count says they existed.
+ */
+const OTHER_MACHINE_REASONS = new Set([
+    "another person's machine",
+    'a user-owned machine has no owner',
+    'a user-owned machine needs its owner',
+]);
+
+/** The explanation safe to store and answer: no other person's machine in `rejected`; a count instead. */
+function publicExplain(explain) {
+    if (!explain || typeof explain !== 'object') return null;
+    const rejected = [];
+    let others = 0;
+    for (const entry of (Array.isArray(explain.rejected) ? explain.rejected : [])) {
+        if (OTHER_MACHINE_REASONS.has(String(entry && entry.why))) { others++; continue; }
+        rejected.push(entry);
+    }
+    return {
+        line: explain.line,
+        ranked: Array.isArray(explain.ranked) ? explain.ranked : [],
+        rejected,
+        others_hidden: others,
+    };
+}
+
+/** A candidate's human name for the line: the machine's or provider's name Run has, else a plain fallback. */
+function displayNameOf(offer, person) {
+    const named = (offer.detail && typeof offer.detail.name === 'string' && offer.detail.name)
+        || (typeof offer.name === 'string' && offer.name)
+        || (typeof offer.machine_name === 'string' && offer.machine_name)
+        || null;
+    if (offer.trust === 'user-owned' && offer.owner === person) return named || 'your machine';
+    return named || offer.provider || (offer.detail && offer.detail.provider) || 'the cloud pool';
+}
+
 /** The person a job was requested by (`user:usr_…`, as Run stores the requester), or null for a service or an app. */
 const personOf = (requester) => (/^user:(usr_[0-9A-HJKMNP-TV-Z]{26})$/.exec(String(requester || '')) || [])[1] || null;
 
@@ -68,7 +106,7 @@ const personOf = (requester) => (/^user:(usr_[0-9A-HJKMNP-TV-Z]{26})$/.exec(Stri
  * createPlacement({ config, fetchImpl, now, log, providers }) → { choose, offers, status }. `providers` maps
  * the name of each external adapter that is on to the classes it runs ({ 'browser-provider': ['browser'] }).
  */
-function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Date.now(), log = console, providers = {} } = {}) {
+function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Date.now(), log = console, providers = {}, outcomes = null, priors = null } = {}) {
     const { url } = config.network;
     const offersUrlOf = (kind) => `${url}/api/v1/offers?kind=${kind}`;
     const offersUrl = offersUrlOf('node');
@@ -182,6 +220,8 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
             return {
                 node_id: o.node_id, provider: o.provider ?? null, region: o.region ?? null, kind: o.kind,
                 offer_id: o.offer_id, trust: o.trust, reasons: [`pinned to ${o.node_id}`],
+                option_key: optionKey(o), step_kind: row.class,
+                explain: publicExplain({ line: `On ${displayNameOf(o, personOf(row.requester))}: this job was pinned there.`, ranked: [], rejected: [] }),
             };
         }
         const requirements = { ...obj(row.job).requirements || requirementsDefault(row.class) };
@@ -209,7 +249,22 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
         if (!candidates.length) return null;
         const req = { ...requirements, capabilities: [...new Set([...(requirements.capabilities || []), want])] };
         contracts.assertValid('platform.workload-requirements@1', req);
-        const result = plan(req, candidates, { now: now() });
+        // Placement A1: Bench's priors per option key (an hour's cache), the person's learned counts (one read) and the
+        // job's class as the step kind. An unreadable table or a quiet Bench leaves the defaults, never a failed placement.
+        const learned = outcomes && person ? await outcomes.forPerson(person) : [];
+        const scores = priors ? await priors.forStep(row.class) : {};
+        const priorMap = {};
+        const displayNames = {};
+        for (const o of candidates) {
+            const model = (o.detail && o.detail.model) || o.model;
+            if (model && scores[model] != null) priorMap[optionKey(o)] = scores[model];
+            displayNames[o.offer_id] = displayNameOf(o, person);
+        }
+        const placed = place(req, candidates, {
+            now: now(), person, step: { kind: row.class }, priors: priorMap, outcomes: learned,
+            names: displayNames, current: requirements.authority || null,
+        });
+        const result = placed.result;
         const chosen = result.selected ? candidates.find((o) => o.offer_id === result.selected) : null;
         if (!chosen) {
             if (log && log.debug) log.debug(`[Run] job ${row.id}: no eligible offer for ${want} (${result.reasons.join('; ')})`);
@@ -220,6 +275,8 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
             node_id: chosen.kind === 'provider' ? (chosen.node_id || chosen.offer_id) : chosen.node_id,
             provider: chosen.provider ?? null, region: chosen.region ?? null, kind: chosen.kind,
             offer_id: chosen.offer_id, trust: chosen.trust, reasons: result.reasons,
+            option_key: optionKey(chosen), step_kind: row.class,
+            explain: publicExplain({ line: placed.line, ranked: placed.ranked, rejected: placed.rejected }),
         };
     }
 
@@ -238,4 +295,4 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
     };
 }
 
-module.exports = { createPlacement, PlacementError, workerCapability, EXTERNAL_PROVIDERS, personOf };
+module.exports = { createPlacement, PlacementError, workerCapability, EXTERNAL_PROVIDERS, personOf, publicExplain, displayNameOf, OTHER_MACHINE_REASONS };
