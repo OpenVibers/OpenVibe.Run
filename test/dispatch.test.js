@@ -432,6 +432,59 @@ async function main() {
             bot.devices.delete(OTHER_DEVICE);
         });
 
+        await check('placement A1: the line, the learned outcome once, and a cancelled job not counted', async () => {
+            const cols = await t.db.many("SELECT column_name FROM information_schema.columns WHERE table_name = 'placement_outcomes' ORDER BY column_name");
+            assert.deepStrictEqual(cols.map((c) => c.column_name), ['n_w', 'ok_w', 'option_key', 'person_id', 'step_kind', 'updated_at']);
+            const ada = ids.newId('user');
+            const bo = ids.newId('user');
+            const P = PROJECT();
+            t.network.members.set(`${P} ${ada}`, { role: 'owner' });
+            t.network.members.set(`${P} ${bo}`, { role: 'owner' });
+            const DEV_A = `dev_${ids.ulid()}`;
+            const DEV_B = `dev_${ids.ulid()}`;
+            bot.devices.set(DEV_A, { classes: ['function'] });
+            bot.devices.set(DEV_B, { classes: ['function'] });
+            t.setOffers([
+                offer({ offer_id: 'off_learn_a', trust: 'user-owned', owner: ada, provider: 'self', node_id: DEV_A }),
+                offer({ offer_id: 'off_learn_b', trust: 'user-owned', owner: bo, provider: 'self', node_id: DEV_B }),
+            ]);
+            const named = { requirements: { kind: 'run.function', mobility: 'job', latency_class: 'background', objective: 'balanced', trust: ['user-owned'] } };
+            const token = t.network.signService({ sub: 'svc:codes', cap: ['run.job.submit', 'run.job.read', 'run.job.cancel'] });
+            const asPerson = async (subject, over) => {
+                const r = await t.call('POST', '/api/v1/jobs', { body: t.request(over), token, headers: { 'X-OV-Subject': subject, 'X-OV-Project': P } });
+                assert.strictEqual(r.status, 201, r.text);
+                return r.json.job;
+            };
+            const settle = async (job) => (await t.dispatch.poll()).find((a) => a.job_id === job.id);
+
+            const mine = await settle(await asPerson(ada, named));
+            assert.strictEqual(mine.state, 'placed');
+            const explained = await t.call('GET', `/api/v1/jobs/${mine.job_id}?explain=1`, { token, headers: { 'X-OV-Subject': ada, 'X-OV-Project': P } });
+            assert.strictEqual(explained.status, 200, explained.text);
+            assert.ok(explained.json.explain && typeof explained.json.explain.line === 'string' && explained.json.explain.line.length > 0, explained.text);
+            assert.ok(Array.isArray(explained.json.explain.ranked));
+            const { explain: _explain, ...contractBody } = explained.json;
+            assert.ok(contracts.validate('run.job-read-result@1', contractBody).valid, 'the contract body is unchanged beside explain');
+            bot.start(mine.job_id);
+            bot.exit(mine.job_id, { reason: 'exited', code: 0, wallMs: 1000 });
+            await t.dispatch.poll();
+            const rows = await t.db.many('SELECT * FROM placement_outcomes WHERE person_id = $1', [ada]);
+            assert.strictEqual(rows.length, 1, 'one learned row');
+            assert.strictEqual(rows[0].option_key, 'off_learn_a');
+            assert.strictEqual(rows[0].step_kind, 'function');
+            assert.ok(Number(rows[0].ok_w) > 0 && Number(rows[0].n_w) === 1);
+            await t.dispatch.poll();
+            assert.strictEqual(Number((await t.db.one('SELECT n_w FROM placement_outcomes WHERE person_id = $1', [ada])).n_w), 1, 'learned once');
+
+            const cancelled = await settle(await asPerson(bo, named));
+            assert.strictEqual(cancelled.state, 'placed');
+            assert.strictEqual((await t.call('POST', `/api/v1/jobs/${cancelled.job_id}/cancel`, { token, headers: { 'X-OV-Subject': bo, 'X-OV-Project': P } })).status, 200);
+            await t.dispatch.poll();
+            assert.strictEqual(Number(await t.db.value('SELECT count(*) FROM placement_outcomes WHERE person_id = $1', [bo])), 0, 'a cancelled job is not counted');
+            bot.devices.delete(DEV_A);
+            bot.devices.delete(DEV_B);
+        });
+
         await check('a pinned machine (Codes C9c): placed only there, refused when it is offline, never moved', async () => {
             const ada = ids.newId('user');
             const bo = ids.newId('user');

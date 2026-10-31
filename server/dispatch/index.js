@@ -34,6 +34,8 @@ const { createBotClient } = require('./bot');
 const { createBrowserProviderAdapter, PROVIDER: BROWSER_PROVIDER } = require('./browser-provider');
 const { createPlacement, workerCapability } = require('./placement');
 const { createPoller } = require('../jobs/poller');
+const { createOutcomes } = require('./outcomes');
+const { createPriors } = require('./priors');
 const { createUsageRelay } = require('../jobs/usage');
 
 /**
@@ -42,13 +44,17 @@ const { createUsageRelay } = require('../jobs/usage');
  * provider, offers and clock.
  */
 function createDispatcher({ config = null, db = null, store = null, events = null, stream = null, log = console,
-    now = () => Date.now(), fetchImpl = globalThis.fetch, bot = null, provider = null, usageRelay = null, placement = null } = {}) {
+    now = () => Date.now(), fetchImpl = globalThis.fetch, bot = null, provider = null, usageRelay = null, placement = null,
+    outcomes = null, priors = null } = {}) {
     const botClient = bot || createBotClient({ config, fetchImpl, now, log });
     const adapter = provider || createBrowserProviderAdapter({ config, fetchImpl, now, log });
     const relay = usageRelay || createUsageRelay({ db, config, fetchImpl, now, log });
+    // Placement A1: the learned counts and Bench priors (an hour) are shared by the placer and the poller's end record.
+    const learned = outcomes || (db ? createOutcomes({ db, now, log }) : null);
+    const benchPriors = priors || createPriors({ config, fetchImpl, now, log, ttlMs: config && config.bench ? config.bench.priorsTtlMs : undefined });
     // Provider offers are placement candidates only while the adapter can be called.
-    const placer = placement || createPlacement({ config, fetchImpl, now, log, providers: adapter.enabled ? { [BROWSER_PROVIDER]: ['browser'] } : {} });
-    const poller = createPoller({ config, db, store, events, stream, bot: botClient, provider: adapter, usageRelay: relay, placement: placer, now, log });
+    const placer = placement || createPlacement({ config, fetchImpl, now, log, providers: adapter.enabled ? { [BROWSER_PROVIDER]: ['browser'] } : {}, outcomes: learned, priors: benchPriors });
+    const poller = createPoller({ config, db, store, events, stream, bot: botClient, provider: adapter, usageRelay: relay, placement: placer, outcomes: learned, now, log });
     const enabled = Boolean(botClient.enabled || adapter.enabled);
     const note = botClient.enabled
         ? (adapter.enabled ? `${botClient.note}; ${adapter.note}` : botClient.note)
@@ -97,7 +103,7 @@ function createDispatcher({ config = null, db = null, store = null, events = nul
         }),
         now,
         // Kept so step 6's bridge has its dependencies in one place without changing the seam's signature.
-        deps: { config, db, store, events, stream, log, bot: botClient, provider: adapter, usageRelay: relay, placement: placer, poller },
+        deps: { config, db, store, events, stream, log, bot: botClient, provider: adapter, usageRelay: relay, placement: placer, poller, outcomes: learned, priors: benchPriors },
     };
 }
 

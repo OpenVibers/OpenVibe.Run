@@ -136,6 +136,14 @@ function loadConfig(env = process.env) {
             maxPerTick: Math.max(1, int(env.RUN_DISPATCH_MAX_PER_TICK, 200)),
         },
 
+        // Placement A1: Bench's quality priors, cached an hour, used by place() when the option is a model Bench has
+        // seen. Off in tests unless asked for, so a unit test never reaches the real Bench.
+        bench: {
+            url: trim(env.RUN_BENCH_URL || 'https://bench.openvibe.services'),
+            priors: env.RUN_BENCH_PRIORS != null ? bool(env.RUN_BENCH_PRIORS) : nodeEnv !== 'test',
+            priorsTtlMs: Math.max(0, int(env.RUN_BENCH_PRIORS_TTL_MS, 60 * 60_000)),
+        },
+
         // The external managed-browser provider (plan T14 R4a, server/dispatch/browser-provider.js): class browser
         // jobs placed on a kind=provider offer named `browser-provider` go to its API instead of Bot. Off while
         // RUN_BROWSER_PROVIDER_URL or the key is unset: no provider offer is placed on, so a browser job waits.

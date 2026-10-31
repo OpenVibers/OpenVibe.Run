@@ -7,7 +7,7 @@
  * - their open browser sessions (run_sessions, server/sessions/), keyed `owner = user:usr_…`. The export carries each
  *   session's settings and timing, never its ticket or stream secret; deletion removes them.
  * - the jobs they submitted (run_jobs.requester = `user:usr_…`). The export carries the job, its result and its
- *   timings; the row itself stays, because it is the project's record of the work and of what it cost, but the
+ *   timings; the placement counts learned about their jobs (placement_outcomes) leave with them too; the row itself stays, because it is the project's record of the work and of what it cost, but the
  *   requester becomes `user:deleted`, so the job no longer leads to a person.
  *
  * Telemetry samples that name a person are covered by the SDK itself (telemetry.json, then subject NULL).
@@ -19,6 +19,9 @@ const TABLES = [
         table: 'run_sessions', subject: 'owner', value: (usr) => `user:${usr}`, file: 'sessions.json', order: 'created_at',
         columns: ['id', 'via', 'kind', 'state', 'width', 'height', 'ttl_s', 'idle_s', 'machine_asked', 'requirements', 'machine', 'created_at', 'started_at', 'last_used_at', 'ended_at', 'end_reason', 'end_detail', 'metered_minutes', 'updated_at'],
     },
+    // Placement A1's learned counts: plain weights per option key and step kind, never text. Exported and erased with
+    // the person.
+    { table: 'placement_outcomes', subject: 'person_id', file: 'placement-outcomes.json', order: 'updated_at' },
     // The jobs are handled by the service itself (the requester is tombstoned, not deleted), so they are not in the
     // table map; they are listed as covered in the test's guard.
 ];

@@ -39,7 +39,7 @@
  * answer with no eligible candidate is null, which the poller settles run.job.unplaceable.
  */
 const contracts = require('openvibe-contracts');
-const { plan } = require('openvibe-sdk/placement');
+const { place, optionKey } = require('openvibe-sdk/placement');
 const { createServiceTokenClient } = require('openvibe-sdk/auth');
 const { requirementsDefault } = require('../util');
 const { PROVIDER: BROWSER_PROVIDER } = require('./browser-provider');
@@ -68,7 +68,7 @@ const personOf = (requester) => (/^user:(usr_[0-9A-HJKMNP-TV-Z]{26})$/.exec(Stri
  * createPlacement({ config, fetchImpl, now, log, providers }) → { choose, offers, status }. `providers` maps
  * the name of each external adapter that is on to the classes it runs ({ 'browser-provider': ['browser'] }).
  */
-function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Date.now(), log = console, providers = {} } = {}) {
+function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Date.now(), log = console, providers = {}, outcomes = null, priors = null } = {}) {
     const { url } = config.network;
     const offersUrlOf = (kind) => `${url}/api/v1/offers?kind=${kind}`;
     const offersUrl = offersUrlOf('node');
@@ -182,6 +182,8 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
             return {
                 node_id: o.node_id, provider: o.provider ?? null, region: o.region ?? null, kind: o.kind,
                 offer_id: o.offer_id, trust: o.trust, reasons: [`pinned to ${o.node_id}`],
+                option_key: optionKey(o), step_kind: row.class,
+                explain: { line: 'On your machine: this job was pinned there.', ranked: [], rejected: [] },
             };
         }
         const requirements = { ...obj(row.job).requirements || requirementsDefault(row.class) };
@@ -209,7 +211,23 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
         if (!candidates.length) return null;
         const req = { ...requirements, capabilities: [...new Set([...(requirements.capabilities || []), want])] };
         contracts.assertValid('platform.workload-requirements@1', req);
-        const result = plan(req, candidates, { now: now() });
+        // Placement A1: Bench's priors per option key (an hour's cache), the person's learned counts (one read) and the
+        // job's class as the step kind. An unreadable table or a quiet Bench leaves the defaults, never a failed placement.
+        const learned = outcomes && person ? await outcomes.forPerson(person) : [];
+        const scores = priors ? await priors.forStep(row.class) : {};
+        const priorMap = {};
+        const displayNames = {};
+        for (const o of candidates) {
+            const model = (o.detail && o.detail.model) || o.model;
+            if (model && scores[model] != null) priorMap[optionKey(o)] = scores[model];
+            displayNames[o.offer_id] = o.trust === 'user-owned' && o.owner === person ? 'your machine'
+                : (o.provider || (o.detail && o.detail.provider) || 'the cloud pool');
+        }
+        const placed = place(req, candidates, {
+            now: now(), person, step: { kind: row.class }, priors: priorMap, outcomes: learned,
+            names: displayNames, current: requirements.authority || null,
+        });
+        const result = placed.result;
         const chosen = result.selected ? candidates.find((o) => o.offer_id === result.selected) : null;
         if (!chosen) {
             if (log && log.debug) log.debug(`[Run] job ${row.id}: no eligible offer for ${want} (${result.reasons.join('; ')})`);
@@ -220,6 +238,8 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
             node_id: chosen.kind === 'provider' ? (chosen.node_id || chosen.offer_id) : chosen.node_id,
             provider: chosen.provider ?? null, region: chosen.region ?? null, kind: chosen.kind,
             offer_id: chosen.offer_id, trust: chosen.trust, reasons: result.reasons,
+            option_key: optionKey(chosen), step_kind: row.class,
+            explain: { line: placed.line, ranked: placed.ranked, rejected: placed.rejected },
         };
     }
 

@@ -6,6 +6,10 @@ Notable changes to OpenVibe.Run. The service is unreleased; everything below is 
 
 ### Added
 
+- Placement A1 (openvibe-sdk 0.76.0): `server/dispatch/placement.js` calls `place()` — Bench priors (an hour's
+  cache), the person's learned counts and one plain line — and the same answer is stored on the job. `GET
+  /api/v1/jobs/:id?explain=1` answers the line beside the contract body. `placement_outcomes` (migration 0007) learns
+  one outcome per ended job: exit 0 is ok, a failure or a timeout is not; a cancelled job is not counted.
 - The repository skeleton (plan T14 step 4, R1a): `server/config.js` on port 4920, `server/db.js`,
   `server/app.js`, `server/index.js`, `server/observability.js` (`/api/health`, `/api/ready`, `/release.json`,
   loopback-only `/metrics`), `server/api/auth.js`, `server/events/outbox.js`, `migrations/0001_jobs.sql`
