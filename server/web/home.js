@@ -102,7 +102,7 @@ function renderUpdates({ config }) {
         agentLayer: true, llms: `${config.baseUrl}/llms.txt`,
         navbar: { service: 'run', apiBase: NETWORK_URL, links, history: { type: 'page', title: SITE_NAME } },
         footer: FOOTER, home: '/', navLinks: links,
-        head: [appIcon.headTags({ site: 'run' }), '<link rel="manifest" href="/manifest.webmanifest">', `<link rel="apple-touch-icon" href="${require('openvibe-shared/app-icons').url('run', 192)}">`].join('\n'),
+        head: [appIcon.headTags({ site: 'run' }), '<link rel="manifest" href="/manifest.webmanifest">', `<link rel="apple-touch-icon" href="${require('openvibe-shared/app-icons').url('run', 192)}">`, `<link rel="stylesheet" href="${ovServe.url(showcase.STYLESHEET)}">`].join('\n'),
         body: `<div id="navbar-mount"></div>\n<main id="main" class="page">\n${frame.updatesBody({ service: 'run', siteName: SITE_NAME })}\n</main>\n<script src="${ovServe.url('shipped.js')}" defer></script>`,
     });
 }
