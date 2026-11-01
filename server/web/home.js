@@ -125,6 +125,26 @@ function body() {
     return showcase.hero({
         eyebrow: 'OpenVibe.Run · part of OpenVibe Services · alpha',
         title: 'Run jobs on your own machine,',
+        // The hero's picture is this site's own (2026-11-01): it drew the generic aura, the same on six homes.
+        // How a job runs, around the node: pair, submit, sandbox, stream, meter.
+        orbit: {
+            label: 'How a job runs',
+            center: { title: 'Your node', sub: 'runs the job' },
+            inner: [
+                { icon: 'ov:plug', label: 'Pair', href: 'https://openvibe.bot/machines' },
+                { icon: 'ov:code', label: 'Submit', href: '#api' },
+                { icon: 'ov:shield', label: 'Sandbox', href: '#how' },
+                { icon: 'ov:history', label: 'Stream', href: '#how' },
+                { icon: 'ov:gauge', label: 'Meter', href: '#how' },
+            ],
+            outer: [
+                { icon: 'ov:codes', label: 'Codes', href: 'https://openvibe.codes/' },
+                { icon: 'ov:bot', label: 'Bot', href: 'https://openvibe.bot/' },
+                { icon: 'ov:services', label: 'Services', href: 'https://openvibe.services/' },
+                { icon: 'ov:ai', label: 'AI', href: 'https://ai.openvibe.services/' },
+                { icon: 'ov:network', label: 'Network', href: 'https://openvibe.network/' },
+            ],
+        },
         accent: 'or on a node that can.',
         lede: 'Pair a computer once and the jobs you start run there, on your hardware, with their output streamed back to you. '
             + 'Or send a job to one API with your project\'s token: Run picks a node that offers the runtime it asks for and meters it per second.',
