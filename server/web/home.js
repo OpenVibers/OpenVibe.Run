@@ -91,6 +91,10 @@ function renderHome({ config }) {
 
 const FOOTER = { service: 'run', variant: 'full', mount: '#ov-footer', brandName: SITE_NAME, updates: '/updates' };
 
+// The page's type: shell.page sets no font and showcase.css styles only its own sections, so without these rules
+// /updates fell back to the browser's Times New Roman (domain sweep, 2026-11-01). Zero specificity: any site rule wins.
+const UPDATES_FONT = "<style>:where(body){font-family:var(--ov-font,'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif)}:where(main.page){display:block;max-width:880px;margin:0 auto;padding:24px max(16px,env(safe-area-inset-right,0px)) 56px max(16px,env(safe-area-inset-left,0px))}:where(.ov-updates h1){font-size:clamp(1.6rem,5.4vw,2.2rem);line-height:1.15;margin:0 0 10px;text-wrap:balance}</style>";
+
 /** /updates: what shipped on this site, the network's shared update log (openvibe-shared/frame updatesBody). */
 function renderUpdates({ config }) {
     const links = [{ label: 'How it works', href: '/#how' }, { label: 'API', href: '/#api' }];
@@ -102,7 +106,7 @@ function renderUpdates({ config }) {
         agentLayer: true, llms: `${config.baseUrl}/llms.txt`,
         navbar: { service: 'run', apiBase: NETWORK_URL, links, history: { type: 'page', title: SITE_NAME } },
         footer: FOOTER, home: '/', navLinks: links,
-        head: [appIcon.headTags({ site: 'run' }), '<link rel="manifest" href="/manifest.webmanifest">', `<link rel="apple-touch-icon" href="${require('openvibe-shared/app-icons').url('run', 192)}">`, `<link rel="stylesheet" href="${ovServe.url(showcase.STYLESHEET)}">`].join('\n'),
+        head: [appIcon.headTags({ site: 'run' }), '<link rel="manifest" href="/manifest.webmanifest">', `<link rel="apple-touch-icon" href="${require('openvibe-shared/app-icons').url('run', 192)}">`, UPDATES_FONT].join('\n'),
         body: `<div id="navbar-mount"></div>\n<main id="main" class="page">\n${frame.updatesBody({ service: 'run', siteName: SITE_NAME })}\n</main>\n<script src="${ovServe.url('shipped.js')}" defer></script>`,
     });
 }
