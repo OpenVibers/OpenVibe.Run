@@ -112,6 +112,33 @@ function renderUpdates({ config }) {
     });
 }
 
+/** The page a browser gets for a path nothing serves: the site's own Frame, one way back, and no clue about what was asked for. */
+function renderNotFound({ config }) {
+    const host = String(config.baseUrl).replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    const links = [{ label: 'How it works', href: '/#how' }, { label: 'API', href: '/#api' }];
+    return shell.page({
+        name: SITE_NAME, service: 'run', lang: 'en',
+        title: `Page not found · ${SITE_NAME}`,
+        siteName: SITE_NAME, description: `There is no page at this address on ${host}.`,
+        robots: 'noindex, follow',
+        navbar: { service: 'run', apiBase: NETWORK_URL, links, history: { type: 'page', title: SITE_NAME } },
+        footer: FOOTER, home: '/', navLinks: links,
+        head: [appIcon.headTags({ site: 'run' }), '<link rel="manifest" href="/manifest.webmanifest">',
+            `<link rel="apple-touch-icon" href="${require('openvibe-shared/app-icons').url('run', 192)}">`,
+            `<link rel="stylesheet" href="${ovServe.url(showcase.STYLESHEET)}">`, UPDATES_FONT].join('\n'),
+        body: `<div id="navbar-mount"></div>
+<main id="main" class="page">
+<h1>Page not found</h1>
+<p>There is no page at this address on ${esc(host)}. The link may be old or mistyped.</p>
+<div class="sc-actions">
+<a class="sc-btn sc-primary" href="/">${SITE_NAME} home</a>
+<a class="sc-btn" href="/#how">How it works</a>
+<a class="sc-btn" href="/#api">API</a>
+</div>
+</main>`,
+    });
+}
+
 const SDK_EXAMPLE = `const { createClient } = require('openvibe-sdk/core');
 const { createRunClient } = require('openvibe-sdk/run');
 
@@ -212,4 +239,4 @@ function body() {
     });
 }
 
-module.exports = { renderHome, renderUpdates, HOME_CSP, SITE_NAME, DESCRIPTION, FAQ };
+module.exports = { renderHome, renderUpdates, renderNotFound, HOME_CSP, SITE_NAME, DESCRIPTION, FAQ };

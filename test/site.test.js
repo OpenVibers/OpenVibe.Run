@@ -58,6 +58,20 @@ const { boot, check, done } = require('./helpers/app');
             assert.strictEqual(r.status, 404);
             assert.match(r.headers.get('content-type'), /problem\+json/);
         });
+        await check('a browser that asks for a missing page gets the site 404 page in the Frame', async () => {
+            const r = await t.call('GET', '/no-such-page-xyz', { token: null, headers: { Accept: 'text/html' } });
+            assert.strictEqual(r.status, 404);
+            assert.match(r.headers.get('content-type'), /^text\/html/);
+            assert.ok(r.text.includes('<h1>Page not found</h1>'), r.text.slice(0, 300));
+            assert.ok(r.text.includes('There is no page at this address on run.test. The link may be old or mistyped.'));
+            assert.ok(r.text.includes('id="navbar-mount"'), 'the page is in the site Frame');
+            assert.ok(r.text.includes('<meta name="robots" content="noindex, follow">'));
+            assert.strictEqual(r.headers.get('x-robots-tag'), 'noindex');
+            assert.ok(r.text.includes('class="sc-btn sc-primary" href="/"'), 'home is the first way back');
+            const api = await t.call('GET', '/no-such-page-xyz', { token: null, headers: { Accept: 'application/json' } });
+            assert.strictEqual(api.status, 404);
+            assert.match(api.headers.get('content-type'), /problem\+json/);
+        });
     } finally {
         await t.close();
     }

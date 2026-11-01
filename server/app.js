@@ -163,8 +163,11 @@ function createApp(opts = {}) {
     if (opts.accountData) app.post('/internal/events', opts.accountData.consumer({ secrets: [config.events.secret].filter((s) => s.length >= 32), send: opts.accountSend || null }));
 
     app.use((req, res) => {
-        if (req.path.startsWith('/api/') || req.path.startsWith('/internal/')) return http.sendProblem(res, 404, 'not_found', { ctx: req.ov });
-        return res.status(404).type('text/plain').send('Not found\n');
+        if (req.path.startsWith('/api/') || req.path.startsWith('/internal/') || req.accepts(['application/json', 'text/html']) !== 'text/html') {
+            return http.sendProblem(res, 404, 'not_found', { ctx: req.ov });
+        }
+        return res.status(404).type('html').set('Content-Security-Policy', home.HOME_CSP).set('Cache-Control', 'no-store')
+            .set('X-Robots-Tag', 'noindex').send(home.renderNotFound({ config }));
     });
     // eslint-disable-next-line no-unused-vars
     app.use((err, req, res, next) => {
