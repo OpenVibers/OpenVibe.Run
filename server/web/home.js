@@ -10,6 +10,7 @@
  *   HOME_CSP                 its Content-Security-Policy (the Frame's scripts and calls to the Network)
  */
 const shell = require('openvibe-shared/shell');
+const seo = require('openvibe-shared/seo');
 const frame = require('openvibe-shared/frame');
 const showcase = require('openvibe-shared/showcase');
 const appIcon = require('openvibe-shared/app-icon');
@@ -78,7 +79,7 @@ function renderHome({ config }) {
     return shell.page({
         name: SITE_NAME, service: 'run', lang: 'en',
         title: `${SITE_NAME}: run jobs on your own machine`,
-        jsonLd: FAQ.length ? [{ '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: FAQ.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })) }] : undefined,
+        jsonLd: [seo.jsonLd.website({ name: SITE_NAME, url: `${config.baseUrl}/`, description: DESCRIPTION }), seo.jsonLd.organization(), ...(FAQ.length ? [{ '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: FAQ.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })) }] : [])],
         siteName: SITE_NAME, description: DESCRIPTION, summary: DESCRIPTION,
         canonical: `${config.baseUrl}/`, robots: 'index, follow',
         agentLayer: true, llms: `${config.baseUrl}/llms.txt`,
