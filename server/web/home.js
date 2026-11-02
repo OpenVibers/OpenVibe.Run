@@ -31,7 +31,7 @@ const HOME_CSP = [
     // The Frame's theme-loader, navbar and footer are served from /shared; the inline boot is the shell's.
     "script-src 'self' 'unsafe-inline' https://openvibe.network https://static.cloudflareinsights.com",
     "style-src 'self' 'unsafe-inline' https://openvibe.network https://fonts.googleapis.com https://cdnjs.cloudflare.com",
-    "font-src 'self' data: https://fonts.gstatic.com https://cdnjs.cloudflare.com",
+    "font-src 'self' data: https://fonts.gstatic.com https://cdnjs.cloudflare.com https://openvibe.network",
     "img-src 'self' data: https:",
     // The navbar asks the Network for the session, menus and notifications.
     "connect-src 'self' https://openvibe.network https://openvibe.events https://cloudflareinsights.com",
