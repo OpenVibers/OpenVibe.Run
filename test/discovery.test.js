@@ -18,7 +18,9 @@ const KEY = require('crypto').randomBytes(16).toString('hex');
             assert.strictEqual(r.status, 200);
             assert.match(r.headers.get('content-type'), /^text\/plain/);
             assert.match(r.text, /^# OpenVibe\.Run\n/);
+            assert.ok(r.text.includes('http://run.test/index.md'), 'home link points at its Markdown twin');
             assert.ok(r.text.includes('http://run.test/terms'));
+            assert.ok(r.text.includes('\n## Optional\n'), 'llms.txt has an Optional section');
             assert.ok(!/\/api\/|\/internal\/|\/admin|\/jobs|\/stream/.test(r.text), 'no machine route is listed');
         });
         await check('/llms-full.txt answers 200 text/plain within maxBytes and carries the front page text', async () => {
