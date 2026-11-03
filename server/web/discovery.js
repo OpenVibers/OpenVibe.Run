@@ -14,23 +14,26 @@ const NODE_REPO = 'https://github.com/OpenVibers/OpenVibe.Node';
 const PAGES = ['/', '/updates', '/terms', '/privacy', '/dmca'];
 
 function sections(base) {
-    return [
-        { title: 'Pages', links: [
-            { title: 'OpenVibe.Run', url: `${base}/`, note: 'what a job is, how it runs, and the API in brief' },
+    return {
+        main: [
+            { title: 'Pages', links: [
+                { title: 'OpenVibe.Run', url: `${base}/`, note: 'what a job is, how it runs, and the API in brief' },
+            ] },
+        ],
+        optional: [
             { title: 'What shipped', url: `${base}/updates`, note: 'every change deployed, newest first' },
-            { title: 'Terms', url: `${base}/terms` },
-            { title: 'Privacy', url: `${base}/privacy` },
-            { title: 'DMCA', url: `${base}/dmca` },
-        ] },
-        { title: 'Docs', links: [
+            { title: 'Terms', url: `${base}/terms`, html: true },
+            { title: 'Privacy', url: `${base}/privacy`, html: true },
+            { title: 'DMCA', url: `${base}/dmca`, html: true },
             { title: 'OpenVibe.Run on GitHub', url: REPO, note: 'the source and the README: the job API, its states and its capabilities' },
             { title: 'OpenVibe Node', url: NODE_REPO, note: 'pair your own machine to run jobs' },
-        ] },
-    ];
+        ],
+    };
 }
 
 function llmsTxt(config) {
-    return seo.llmsTxt({ name: home.SITE_NAME, summary: home.DESCRIPTION, sections: sections(config.baseUrl) });
+    const { main, optional } = sections(config.baseUrl);
+    return seo.llmsTxt({ name: home.SITE_NAME, summary: home.DESCRIPTION, markdown: true, base: config.baseUrl, sections: main, optional });
 }
 
 function llmsFull(config) {
