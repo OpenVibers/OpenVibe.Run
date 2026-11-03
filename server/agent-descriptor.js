@@ -10,6 +10,7 @@ module.exports = {
     home: 'https://openvibe.run',
     site: 'openvibe.run',
     api: '/api/v1',
+    openapi: '/openapi.json',
     policy: {
         auth: ['none', 'Network service token (Bearer, per project)'],
     },
