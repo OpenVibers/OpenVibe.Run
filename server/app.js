@@ -51,7 +51,7 @@ function createApp(opts = {}) {
     const keys = opts.keys || createKeyProvider(config, { fetchImpl, log });
     const userAuth = createUserAuth(config, keys);
     const outbox = opts.outbox || createRunOutbox({ db, config, fetchImpl: opts.eventsFetch, now, log });
-    const events = opts.events || createRunEvents({ outbox, now, log });
+    const events = opts.events || createRunEvents({ outbox, now, log, config });
     const stream = opts.stream || createJobStream({ config, now, log });
     const tickets = opts.tickets || createStreamTickets({ config, now, log });
     // The dispatcher bridge to Bot (plan T14 step 6, server/dispatch/index.js): placement from the Fabric
