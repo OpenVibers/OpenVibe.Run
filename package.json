@@ -26,7 +26,7 @@
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.1.0",
     "iovalkey": "^0.4.0",
-    "openvibe-contracts": "https://codeload.github.com/OpenVibers/OpenVibe.Contracts/tar.gz/9b23593a09a7fe827e5ffc51550bbc2e21a07f38",
+    "openvibe-contracts": "https://codeload.github.com/OpenVibers/OpenVibe.Contracts/tar.gz/8a97db361554bdaae0f45614e7f97d530730d9c8",
     "openvibe-sdk": "https://codeload.github.com/OpenVibers/OpenVibe.SDK/tar.gz/refs/tags/v0.94.0",
     "openvibe-shared": "https://codeload.github.com/OpenVibers/OpenVibe.Shared/tar.gz/refs/tags/v4.133.0",
     "pg": "^8.23.0"
