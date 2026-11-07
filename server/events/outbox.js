@@ -24,7 +24,8 @@ const { createServiceOutbox } = require('openvibe-sdk/events');
 const TABLE = 'run_events_outbox';   // migrations/0001_jobs.sql
 const ACTOR = { type: 'service', id: 'run' };
 const EVENT_TYPES = ['run.job.queued', 'run.job.started', 'run.job.succeeded', 'run.job.failed', 'run.job.cancelled', 'run.job.expired',
-    'run.session.started', 'run.session.ended'];   // server/sessions/service.js (contracts 0.223.0)
+    'run.session.started', 'run.session.ended',
+    'agent.step.started', 'agent.step.updated', 'agent.step.ended'];   // server/sessions/service.js (contracts 0.223.0)
 
 function createRunOutbox({ db, config, fetchImpl, now, log = console }) {
     return createServiceOutbox({

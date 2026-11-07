@@ -68,12 +68,55 @@ function payloadOf(row) {
     };
 }
 
+/** The agent's step (design 2026-11-07): the three events every mode publishes into the network's agent namespace. */
+const AGENT_TOPICS = Object.freeze({
+    started: 'agent.step.started',
+    updated: 'agent.step.updated',
+    ended: 'agent.step.ended',
+});
+const AGENT_TOPIC_OF_STATE = Object.freeze({
+    queued: AGENT_TOPICS.started,
+    running: AGENT_TOPICS.started,
+    succeeded: AGENT_TOPICS.ended,
+    failed: AGENT_TOPICS.ended,
+    cancelled: AGENT_TOPICS.ended,
+    expired: AGENT_TOPICS.ended,
+});
+const AGENT_STATUS_OF_STATE = Object.freeze({
+    queued: 'waiting', running: 'running', succeeded: 'done', failed: 'failed', cancelled: 'stopped', expired: 'failed',
+});
+const AGENT_CLASS_WORDS = Object.freeze({
+    function: 'function', code: 'code', browser: 'browser', linux: 'Linux', desktop: 'desktop', gpu: 'GPU',
+});
+
+/** The job's step: what it is, where it runs, how it ended and where to see it — never args, inputs or output. */
+function agentStepOf(row, state, { baseUrl = null } = {}) {
+    const job = toJob(row);
+    const status = AGENT_STATUS_OF_STATE[state] || 'running';
+    const what = AGENT_CLASS_WORDS[job.class] || 'a job';
+    const base = String(baseUrl || 'https://openvibe.run').replace(/\/+$/, '');
+    return {
+        step_id: job.id,
+        mode: 'run',
+        product: 'run',
+        ref: job.id,
+        title: `A ${what} job`,
+        status,
+        started_at: job.timings.started_at || job.timings.created_at,
+        ended_at: status === 'waiting' || status === 'running' ? null : (job.timings.finished_at || new Date().toISOString()),
+        placement: { where: job.placement ? 'On a machine in the network' : 'On the network', why: 'it runs once where the tools it needs are, and stops when it ends' },
+        cost_usd: null,
+        link: `${base}/api/v1/jobs/${encodeURIComponent(job.id)}`,
+        reason: status === 'failed' ? (job.error && (job.error.detail || job.error.code) ? String(job.error.detail || job.error.code).slice(0, 240) : 'it did not finish') : null,
+    };
+}
+
 /**
  * createRunEvents({ outbox, now }) → one emitter per state plus emit(t, row, state). Every emitter
  * validates the payload against its released contract before it reaches the outbox, so a projection bug
  * is an error here rather than a malformed event on the bus.
  */
-function createRunEvents({ outbox, now = () => Date.now(), log = console }) {
+function createRunEvents({ outbox, now = () => Date.now(), log = console, config = null }) {
     /**
      * The outbox row for one (job, state), written in the caller's transaction. The row's key is
      * `run:<job id>:<state>`; a row that is already there is left alone (ON CONFLICT DO NOTHING), which is
@@ -108,7 +151,36 @@ function createRunEvents({ outbox, now = () => Date.now(), log = console }) {
         // The payload contract is the event's own (run.job.started@1 for the running state: a state and
         // its event name are not always the same word, and run.job.running@1 does not exist).
         contracts.assertValid(spec.contract, payload);
-        return enqueueOnce(t, row, spec, payload, traceparent);
+        const out = await enqueueOnce(t, row, spec, payload, traceparent);
+        // The agent's step (design 2026-11-07): one row per job change, with the person's subject, so the one
+        // timeline behind the Dock shows it. A service's job has no person to show it to. Never args, inputs,
+        // output or a result body: a title, an outcome and a link.
+        if (out.enqueued) await enqueueAgentStep(t, row, state);
+        return out;
+    }
+
+    /** agent.step.started for queued/running and agent.step.ended for the four end states, as the same row. */
+    async function enqueueAgentStep(t, row, state) {
+        const person = toJob(row).requester;
+        if (!person || person.type !== 'user' || !/^usr_[0-9A-HJKMNP-TV-Z]{26}$/.test(String(person.id || ''))) return null;
+        const topic = AGENT_TOPIC_OF_STATE[state];
+        if (!topic) return null;
+        const prepared = outbox.events.prepare({
+            event_type: topic,
+            version: 1,
+            source: 'run',
+            actor: { type: 'user', id: person.id },
+            timestamp: new Date(now()).toISOString(),
+            subject: { type: 'user', id: person.id },
+            visibility: 'internal',
+            payload: agentStepOf(row, state, { baseUrl: config && config.baseUrl }),
+        }, { now: now() });
+        contracts.assertValid('events.event-envelope@1', prepared);
+        // A row per (job, state), like the run.job.* row: a replay is the row already there, never a second event.
+        await t.maybe(
+            `INSERT INTO ${TABLE} (event_id, envelope, traceparent, created_at) VALUES ($1, $2, NULL, $3) ON CONFLICT (event_id) DO NOTHING`,
+            [`agent:${row.id}:${state}`, JSON.stringify(prepared), now()]);
+        return prepared;
     }
 
     return {
@@ -124,4 +196,4 @@ function createRunEvents({ outbox, now = () => Date.now(), log = console }) {
     };
 }
 
-module.exports = { createRunEvents, payloadOf, EVENT_OF_STATE, TRACEPARENT_RE };
+module.exports = { createRunEvents, agentStepOf, AGENT_TOPICS, AGENT_TOPIC_OF_STATE, payloadOf, EVENT_OF_STATE, TRACEPARENT_RE };
