@@ -253,6 +253,6 @@ until Run has a product surface; the vhost below is installed then.
 
 <!-- versions:start -->
 - openvibe-contracts: v0.289.1
-- openvibe-sdk: v0.91.0
+- openvibe-sdk: v0.93.0
 - openvibe-shared: v4.124.0
 <!-- versions:end -->
