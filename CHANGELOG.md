@@ -6,6 +6,13 @@ Notable changes to OpenVibe.Run. The service is unreleased; everything below is 
 
 ### Added
 
+- One Computer (plan 2026-11-07, contracts 0.327.0): `run.session@1` carries `task_id` (the OpenVibe.Actor task the
+  session is the Computer of, so the session points back at the task) and `curtain` (the privacy screen).
+  `GET /api/v1/sessions/{id}/still` answers the desk's newest frame as a small JPEG (at most 640 px wide, cached for a
+  second so it captures at most once a second) from the desk's own capture on the session's lease; it is the session
+  person's alone, a signed-out visitor gets 404 like a missing session, `Cache-Control` is `private, no-store`, and
+  while `POST /api/v1/sessions/{id}/curtain` holds it up the answer is the curtain picture, never the screen.
+  Migration 0008 adds `task_id` and `curtain`.
 - Placement A1 (openvibe-sdk 0.76.0): `server/dispatch/placement.js` calls `place()` — Bench priors (an hour's
   cache), the person's learned counts and one plain line — and the same answer is stored on the job. `GET
   /api/v1/jobs/:id?explain=1` answers the line beside the contract body. `placement_outcomes` (migration 0007) learns
