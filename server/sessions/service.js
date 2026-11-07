@@ -24,6 +24,7 @@
  */
 const contracts = require('openvibe-contracts');
 const store = require('./store');
+const curtain = require('./curtain');
 const usage = require('../jobs/usage');
 const { TABLE: EVENTS_TABLE, ACTOR } = require('../events/outbox');
 
@@ -32,6 +33,11 @@ const DEFAULT_TRUST = ['first-party', 'community'];
 const STARTING_STALE_MS = 60_000;
 const OPERATION = 'browser.desk';
 const SOURCE = 'openvibe-run.session';
+// The still (plan 2026-11-07): one frame a second at most, never wider than 640 px. The desk's own capture is
+// reused — the same screen command Actor's computer tools and the agent stream's frames come from — and the answer
+// is cached for the second, so a page refreshing every two seconds asks the desk at most once per second.
+const STILL_MIN_MS = 1000;
+const STILL_WIDTH = 640;
 
 class SessionError extends Error {
     constructor(status, code, detail) { super(detail || code); this.status = status; this.code = code; this.detail = detail; }
@@ -45,6 +51,8 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
     let timer = null;
     let running = null;
     const hostCache = new Map();   // subject → { at, hosts }
+    const stills = new Map();      // session id → { at, bytes, type, width, height } (one second)
+    const pending = new Map();     // session id → Promise of the frame being captured
 
     const bare = (owner) => String(owner).replace(/^user:/, '');
 
@@ -97,7 +105,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
             id: store.newSessionId(), owner, via: via || null, kind: 'browser', state: 'placing',
             width: body.width || 1280, height: body.height || 800, ttl_s: body.ttl_s || 3600, idle_s: body.idle_s || 900,
             machine_asked: body.machine || null, requirements: body.requirements || null, idempotency_key: body.idempotency_key || null,
-            request_digest: digest, reasons: [], created_at: at, updated_at: at,
+            request_digest: digest, reasons: [], task_id: body.task_id || null, curtain: false, created_at: at, updated_at: at,
         };
         const out = await store.insert(db, row);
         if (out.created) setImmediate(() => { tick().catch((e) => log.warn(`[Run] session tick: ${e.message}`)); });
@@ -115,6 +123,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
             const ended = { ...fresh, state: 'ended', ended_at: now(), end_reason: reason, end_detail: detail ? String(detail).slice(0, 500) : null };
             const metered = await meter(t, ended, { final: true });
             const saved = await store.update(t, row.id, { state: 'ended', ended_at: ended.ended_at, end_reason: reason, end_detail: ended.end_detail, metered_minutes: metered, updated_at: now() });
+            stills.delete(row.id);
             await emit(t, saved, 'run.session.ended');
             return saved;
         });
@@ -137,6 +146,50 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         if (r.reason != null) out.reason = String(r.reason).slice(0, 1000);
         if (r.data && typeof r.data === 'object' && out.result === 'ack') out.data = r.data;
         return out;
+    }
+
+    /**
+     * The session's newest frame, as a small JPEG (plan 2026-11-07: the live still Surf's card shows and the Dock
+     * links to). It reuses the desk's own capture — the `screen` command on the session's lease, the same one Actor's
+     * computer tools read — at most STILL_WIDTH wide, and at most once a second: a caller asking again inside the
+     * second gets the frame already captured.
+     *
+     * Curtain now: while the session's curtain is up the answer is the curtain picture, never a call to the desk.
+     * A session that is not running has no frame (404): the caller never learns whether a machine is there.
+     * → { bytes, type, width, height, curtain } or throws SessionError.
+     */
+    async function still(row) {
+        if (!row) throw new SessionError(404, 'run.session.not_found', 'no such session');
+        if (row.state !== 'running' || !row.machine || !row.desk) throw new SessionError(404, 'run.session.no_still', 'this session has no picture');
+        if (row.curtain) return { bytes: curtain.BYTES, type: curtain.TYPE, width: curtain.WIDTH, height: curtain.HEIGHT, curtain: true };
+        const fresh = stills.get(row.id);
+        if (fresh && now() - fresh.at < STILL_MIN_MS) return fresh;
+        if (pending.has(row.id)) return pending.get(row.id);
+        const shot = (async () => {
+            const r = await desks.act(row.machine, row.desk, bare(row.owner), { id: `still-${Math.floor(now() / 1000)}`, kind: 'screen', value: { max_width: STILL_WIDTH } });
+            if (r === null) {
+                await finish(row, 'host_lost', 'its machine no longer holds the desk', { release: false });
+                throw new SessionError(404, 'run.session.no_still', 'this session has no picture');
+            }
+            const d = r && r.result === 'ack' && r.data ? r.data : null;
+            if (!d || !d.content_b64 || !/^(jpeg|png)$/.test(String(d.format || ''))) throw new SessionError(404, 'run.session.no_still', 'the desk has not sent a frame yet');
+            const bytes = Buffer.from(String(d.content_b64), 'base64');
+            if (!bytes.length) throw new SessionError(404, 'run.session.no_still', 'the desk sent no picture');
+            const out = { at: now(), bytes, type: d.format === 'png' ? 'image/png' : 'image/jpeg', width: Number(d.width) || null, height: Number(d.height) || null, curtain: false };
+            stills.set(row.id, out);
+            if (stills.size > 500) stills.delete(stills.keys().next().value);
+            return out;
+        })().finally(() => pending.delete(row.id));
+        pending.set(row.id, shot);
+        return shot;
+    }
+
+    /** Curtain now: raise or lift the session's privacy screen. The next still is the curtain picture, never the desk. */
+    async function setCurtain(row, up) {
+        if (!row || row.state === 'ended') throw new SessionError(409, 'run.session.not_running', 'the session has ended');
+        const saved = await store.update(db, row.id, { curtain: Boolean(up), updated_at: now() });
+        stills.delete(row.id);
+        return saved;
     }
 
     // ── placement ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -235,7 +288,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
     }
 
     return {
-        create, act, finish, tick, SessionError,
+        create, act, finish, still, setCurtain, tick, SessionError,
         get: (id) => store.get(db, id),
         list: (owner, opts) => store.listOf(db, owner, opts),
         present: (row) => store.present(row, now()),

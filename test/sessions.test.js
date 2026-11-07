@@ -178,6 +178,53 @@ function fakeDesks() {
         assert.deepStrictEqual([late.status, late.json.code], [409, 'run.session.not_running']);
     });
 
+    await check('the still is its person\'s alone, at most once a second, and Curtain now hides the desk', async () => {
+        const TASK = 'tsk_01JAB2C3D4E5F6G7H8J9K0MNPT';
+        const r = await t.call('POST', '/api/v1/sessions', { ...as(bea), body: { kind: 'browser', ttl_s: 600, task_id: TASK } });
+        assert.strictEqual(r.status, 201, r.text);
+        assert.strictEqual(r.json.task_id, TASK, 'the session carries the task back');
+        valid(r.json, 'run.session@1');
+        await sessions.tick();
+        const s = (await t.call('GET', `/api/v1/sessions/${r.json.id}`, as(bea))).json;
+        assert.deepStrictEqual([s.state, s.task_id, s.curtain], ['running', TASK, false]);
+        const acts = () => desks.calls.filter((c) => c[0] === 'act' && c[1] === s.placement.machine && c[4].kind === 'screen').length;
+        const before = acts();
+
+        const one = await t.call('GET', `/api/v1/sessions/${s.id}/still`, as(bea));
+        assert.strictEqual(one.status, 200, one.text);
+        assert.match(one.headers.get('content-type'), /^image\/jpeg/);
+        assert.strictEqual(one.headers.get('cache-control'), 'private, no-store');
+        assert.strictEqual(Number(one.headers.get('content-length')), 3, 'the desk\'s own frame, as it sent it');
+        assert.strictEqual(acts(), before + 1, 'one capture');
+        await t.call('GET', `/api/v1/sessions/${s.id}/still`, as(bea));
+        assert.strictEqual(acts(), before + 1, 'a second still in the same second reuses the frame');
+        t.clock.offset += 1_000;
+        await t.call('GET', `/api/v1/sessions/${s.id}/still`, as(bea));
+        assert.strictEqual(acts(), before + 2, 'a new second captures again');
+
+        assert.strictEqual((await t.call('GET', `/api/v1/sessions/${s.id}/still`, as(ada))).status, 404, 'another person: the same 404 as a missing session');
+        assert.strictEqual((await t.call('GET', `/api/v1/sessions/${s.id}/still`, { token: null })).status, 404, 'a signed-out visitor: 404, never 401');
+        const noRead = { token: t.network.signService({ sub: 'svc:actor', cap: ['run.session.create'] }), headers: { 'X-OV-Subject': bea } };
+        assert.strictEqual((await t.call('GET', `/api/v1/sessions/${s.id}/still`, noRead)).status, 404, 'a service without run.session.read');
+        const reader = { token: t.network.signService({ sub: 'svc:actor', cap: ['run.session.read'] }), headers: { 'X-OV-Subject': bea } };
+        assert.strictEqual((await t.call('GET', `/api/v1/sessions/${s.id}/still`, reader)).status, 200, 'a service acting for the person with run.session.read');
+        assert.strictEqual((await t.call('POST', `/api/v1/sessions/${s.id}/curtain`, { ...as(ada), body: { up: true } })).status, 404, 'only its person raises the curtain');
+
+        const up = await t.call('POST', `/api/v1/sessions/${s.id}/curtain`, { ...as(bea), body: { up: true } });
+        assert.strictEqual(up.status, 200, up.text);
+        assert.strictEqual(up.json.curtain, true);
+        valid(up.json, 'run.session@1');
+        const captured = acts();
+        const hidden = await t.call('GET', `/api/v1/sessions/${s.id}/still`, as(bea));
+        assert.strictEqual(hidden.status, 200);
+        assert.strictEqual(Number(hidden.headers.get('content-length')), 1666, 'the curtain picture, not the desk');
+        assert.strictEqual(acts(), captured, 'Curtain now never asks the desk');
+        assert.strictEqual((await t.call('POST', `/api/v1/sessions/${s.id}/curtain`, { ...as(bea), body: {} })).status, 422);
+        await t.call('POST', `/api/v1/sessions/${s.id}/end`, as(bea));
+        // An ended session has no picture.
+        assert.strictEqual((await t.call('GET', `/api/v1/sessions/${s.id}/still`, as(bea))).status, 404);
+    });
+
     await check('the real desk client: Run\'s token for Bot with bot.desk.session, the person in X-OV-Subject', async () => {
         const seen = [];
         const bot = http.createServer((req, res) => {
