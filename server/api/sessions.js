@@ -9,6 +9,13 @@
  *   GET  /api/v1/sessions/:id                run.session.read     → run.session@1
  *   POST /api/v1/sessions/:id/commands       run.session.control  run.session-control-request@1 → run.session-control-result@1
  *   POST /api/v1/sessions/:id/end            run.session.control  → run.session@1, ended
+ *   GET  /api/v1/sessions/:id/still          run.session.read     the newest frame (JPEG, at most 640 px, at most 1/s);
+ *                                                                 the curtain picture while "Curtain now" is up
+ *   POST /api/v1/sessions/:id/curtain        run.session.control  { up } → run.session@1
+ *
+ * The still is the one exception to this API's "401 for a signed-out caller": anyone who is not the session's person,
+ * or a first-party service holding run.session.read and naming them, gets the same 404 as a session that does not
+ * exist. A picture of someone's desk must never confirm that it is there.
  *
  * A session is its person's: their own Network token, or a first-party service (svc:) holding the capability and
  * naming the person in X-OV-Subject (recorded as via). Anyone else's session is 404, never confirmed to exist. An app,
@@ -45,6 +52,26 @@ function sessionsRouter({ sessions }) {
         if (!row || row.owner !== w.owner) { problem(res, req, 404, 'run.session.not_found', 'no such session of yours'); return null; }
         return row;
     }
+    /**
+     * The still's own guard: the session's person, or a first-party service holding run.session.read and naming them.
+     * Anyone else — including a signed-out visitor — gets 404, never 401/403: a still must not confirm a session exists.
+     */
+    async function mineStill(req, res) {
+        const p = req.principal || { kind: 'anonymous' };
+        const missing = () => { problem(res, req, 404, 'run.session.not_found', 'no such session'); return null; };
+        let owner = null;
+        if (p.kind === 'user') owner = `user:${p.subject}`;
+        else if (p.kind === 'service') {
+            const sub = String(p.sub || '');
+            const subject = String(req.get('X-OV-Subject') || '').trim();
+            if (sub.startsWith('svc:') && capabilities.check(p.claims, 'run.session.read').allowed && USER_SUBJECT.test(subject) && ids.isSubjectId('user', subject)) owner = `user:${subject}`;
+        }
+        if (!owner) return missing();
+        const id = String(req.params.id || '');
+        const row = SESSION_RE.test(id) ? await sessions.get(id) : null;
+        if (!row || row.owner !== owner) return missing();
+        return row;
+    }
     const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch((err) => {
         if (err && err.status && err.code) return problem(res, req, err.status, err.code, err.detail || err.message);
         return next(err);
@@ -78,6 +105,27 @@ function sessionsRouter({ sessions }) {
         if (!row) return;
         const ended = await sessions.finish(row, 'ended', 'ended by its person');
         res.json(sessions.present(ended || row));
+    }));
+    // The newest frame of the session's desk (plan 2026-11-07: the live still). The bytes come from the desk's own
+    // capture, through the session's lease, at most once a second and at most 640 px wide.
+    r.get('/sessions/:id/still', wrap(async (req, res) => {
+        const row = await mineStill(req, res);
+        if (!row) return;
+        const shot = await sessions.still(row);
+        res.set('Cache-Control', 'private, no-store');
+        res.set('X-Content-Type-Options', 'nosniff');
+        res.set('Content-Type', shot.type);
+        res.set('Content-Length', String(shot.bytes.length));
+        res.status(200).end(shot.bytes);
+    }));
+    // Curtain now: the privacy screen, so the next still is the curtain picture and never the desk.
+    r.post('/sessions/:id/curtain', wrap(async (req, res) => {
+        const row = await mine(req, res, 'run.session.control');
+        if (!row) return;
+        const up = req.body && typeof req.body === 'object' && typeof req.body.up === 'boolean' ? req.body.up : null;
+        if (up === null) return problem(res, req, 422, 'run.session.invalid', 'up is true (raise the curtain) or false (lift it)');
+        const saved = await sessions.setCurtain(row, up);
+        res.json(sessions.present(saved));
     }));
     return r;
 }

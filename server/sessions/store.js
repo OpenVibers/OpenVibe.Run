@@ -14,7 +14,7 @@ const { ids } = require('openvibe-contracts');
 
 const COLUMNS = ['id', 'owner', 'via', 'kind', 'state', 'width', 'height', 'ttl_s', 'idle_s', 'machine_asked', 'requirements', 'idempotency_key',
     'request_digest', 'machine', 'desk', 'trust', 'offer_id', 'reasons', 'created_at', 'started_at', 'last_used_at', 'ended_at', 'end_reason',
-    'end_detail', 'metered_minutes', 'lease_checked_at', 'updated_at'];
+    'end_detail', 'metered_minutes', 'lease_checked_at', 'task_id', 'curtain', 'updated_at'];
 const JSON_COLUMNS = new Set(['requirements', 'reasons']);
 
 const iso = (ms) => (ms == null ? null : new Date(Number(ms)).toISOString());
@@ -60,6 +60,10 @@ function present(row, now = Date.now()) {
         end: row.state === 'ended' ? { reason: row.end_reason || 'ended', detail: row.end_detail ? String(row.end_detail).slice(0, 500) : null } : null,
         usage: { desk_seconds: deskSeconds(row, now) },
         idempotency_key: row.idempotency_key || null,
+        // One Computer (contracts 0.327.0): the Actor task that asked for this session, and whether its privacy
+        // screen is up. Both are additive: a session a person opened themselves has no task.
+        task_id: row.task_id || null,
+        curtain: Boolean(row.curtain),
     };
 }
 
