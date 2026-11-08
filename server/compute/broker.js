@@ -139,7 +139,8 @@ function createBroker({db,config,desks,now=Date.now,fetchImpl=globalThis.fetch,a
     continue;
    }
    if(r.state==='releasing') {await release(r); continue;}
-   const committed=rentals.filter(x=>x.provider===r.provider).reduce((sum,x)=>sum+BigInt(x.reserved_micros),0n);
+   const settled=BigInt(await db.value('SELECT COALESCE(SUM(c.amount_micros),0) FROM run_compute_charges c JOIN run_compute_rentals p ON p.id=c.rental WHERE p.provider=$1 AND c.month=$2',[r.provider,month()]));
+   const committed=rentals.filter(x=>x.provider===r.provider).reduce((sum,x)=>sum+BigInt(x.reserved_micros),settled);
    let unhealthy=false;
    if(r.remote_id) { try { const h=await providers[r.provider].health(r.remote_id); unhealthy=h.deleted || ['error','stopped','off','dead'].includes(String(h.state).toLowerCase()); } catch { /* unknown health keeps the reservation and deadline */ } }
    const stop=!cfg.enabled || now()>=Number(r.deadline) || committed>micros(pc.monthly_cap || '0') || unhealthy;
