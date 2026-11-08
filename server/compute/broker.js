@@ -185,11 +185,22 @@ function createBroker({db,config,desks,now=Date.now,fetchImpl=globalThis.fetch,a
     if(a.action==='release' && r && !cfg.dry_run) await release(r);
     if(a.action==='provision') {
      const qs=(await quotes(id)).flatMap(x=>x.quotes).filter(q=>q.provisionable!==false && q.hourly!=null && q.currency===(p.currency || 'USD') && q.ram_mb>=((p.kind==='desktop'?2048:300)+1024));
-     const candidates=qs.map(q=>({...q,id:q.provider+':'+q.id,health:'up',free_ram_mb:q.ram_mb-1024,free_slots:p.slots_per_machine || 1}));
-     const d=choose({kind:p.kind,strategy:waiting[0]?.compute_strategy || p.strategy,region:p.region},candidates,p,{now:now()});
-     const q=qs.find(q=>q.provider+':'+q.id===d.selected);
-     if(q) {const result=await provision(id,q); await journal('scale.decision',{reason:a.reason,decision:d,result},{pool:id});}
-     else await journal('scale.decision',{reason:a.reason,decision:d,result:{reason:'no eligible rental quote'}},{pool:id});
+     let candidates=qs.flatMap(q=>{
+      const pc=cfg.providers[q.provider] || {};
+      if(!cfg.dry_run && (!pc.key || micros(pc.monthly_cap || '0')===0n || !pc.image || !pc.costs_bounded || pc.extra_hourly==null))return [];
+      const extra=pc.extra_hourly==null?0:Number(micros(pc.extra_hourly))/1e6;
+      return [{...q,hourly:q.hourly+extra,id:q.provider+':'+q.id,health:'up',free_ram_mb:q.ram_mb-1024,free_slots:p.slots_per_machine || 1}];
+     });
+     while(true) {
+      const d=choose({kind:p.kind,strategy:waiting[0]?.compute_strategy || p.strategy,region:p.region,gpu_mb:p.gpu_mb},candidates,p,{now:now()});
+      const q=qs.find(q=>q.provider+':'+q.id===d.selected);
+      if(!q){await journal('scale.decision',{reason:a.reason,decision:d,result:{reason:'no eligible rental quote'}},{pool:id});break;}
+      const result=await provision(id,q);
+      await journal('scale.decision',{reason:a.reason,decision:d,result},{pool:id});
+      if(result.rental || result.dry_run || /unknown/.test(result.reason || ''))break;
+      // A provider's exhausted cap or pending release must not hide eligible alternatives.
+      candidates=candidates.filter(c=>c.provider!==q.provider);
+     }
      break; // one fresh quote/reservation per pool/pass, observes previous launches on next pass
     }
    }

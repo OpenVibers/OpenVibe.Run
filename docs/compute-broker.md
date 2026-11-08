@@ -23,7 +23,9 @@ owner. Normal reads remain contract-compatible. Fastest uses measured latency; a
 host has no advantage. Region and privacy constraints never relax to satisfy a queue.
 
 Automatic walks own → home → dedicated → community → partner, rejecting health, capacity,
-queue-wait and price failures first. Home public egress requires an OVH tunnel. RAM packing
+queue-wait and price failures first. New rentals are ranked with their configured disk/network
+allowance; unavailable keys or exhausted provider caps do not hide eligible alternatives.
+Home public egress requires an OVH tunnel. RAM packing
 uses at least 300 MB/browser and 2048 MB/desktop, subtracts 1 GB for the system, and respects
 Bot's slot ceiling. Configure measured peaks from load tests; these defaults are not measurements.
 
