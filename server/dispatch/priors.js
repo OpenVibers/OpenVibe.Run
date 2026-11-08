@@ -3,7 +3,7 @@
 /**
  * Bench priors for Run's placement (agent plan A1): Bench's quality per model on the kind of step, cached for an
  * hour. A job's runtime class maps to a Bench kind when one exists (code → codes.patch), and an offer names its model
- * in detail.model; an offer with no model (a paired Node) simply has no prior and place() uses its 0.7 default.
+ * in detail.model; an offer with no model (a paired Link) simply has no prior and place() uses its 0.7 default.
  *
  * The board is public; a Bench that does not answer leaves the map empty rather than delaying the tick for long.
  */

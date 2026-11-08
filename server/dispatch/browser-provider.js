@@ -4,7 +4,7 @@
  * The managed-browser provider adapter — Run → an external managed-browser provider's job API (plan T14 R4a,
  * ADR-034; Run's own outbound capability browser_provider.job.dispatch, contracts/manifests/capabilities). A
  * class `browser` job placed on a kind=provider offer named `browser-provider` goes here instead of Bot: the
- * provider is not a paired Node, so there is no Bot in between and Run meters the job itself.
+ * provider is not a paired Link, so there is no Bot in between and Run meters the job itself.
  *
  *   send({ job })   POST {url}/jobs              browser-provider.job-create-request@1 → job-create-result@1
  *   state(jobId)    GET  {url}/jobs/{id}         → browser-provider.job-state@1 | null

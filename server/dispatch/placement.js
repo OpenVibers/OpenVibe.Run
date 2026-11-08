@@ -9,7 +9,7 @@
  *   choose(row) → { node_id, provider, region, offer_id, trust, reasons } | null
  *
  * The candidate offers come from OpenVibe.Network's public resource registry
- * (GET {OV_NETWORK_URL}/api/v1/offers?kind=node), where a paired Node's runtime classes are published as
+ * (GET {OV_NETWORK_URL}/api/v1/offers?kind=node), where a paired Link's runtime classes are published as
  * platform.resource-offer@1 with the reserved `worker:<class>` capability (ADR-036 §3: "device node_id →
  * resource-offer.node_id"), so an offer's node_id is the device Bot dispatches to. The public projection
  * leaves `capacity` out (Network redacts it), so the `worker:<class>` free-slot check inside plan() cannot
