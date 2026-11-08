@@ -92,6 +92,9 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         if (compute.pool && (typeof compute.pool !== 'string' || !/^[a-z0-9-]{1,40}$/.test(compute.pool))) throw new SessionError(422, 'run.compute.pool', 'invalid compute pool');
         const pool = compute.pool || null;
         const strategy = compute.strategy || null;
+        const template = compute.template || 'browser';
+        if (!['browser', 'kept-browser', 'throwaway'].includes(template)) throw new SessionError(422, 'run.session.template', 'template must be browser, kept-browser or throwaway');
+        if (template === 'kept-browser') throw new SessionError(501, 'run.session.template_unavailable', 'Kept browser profiles are not available on this machine.');
         if (strategy && !require('openvibe-sdk/compute').STRATEGIES.includes(strategy)) throw new SessionError(422, 'run.compute.strategy', 'unknown compute strategy');
         if (strategy && !pool) throw new SessionError(422, 'run.compute.pool', 'a strategy requires a compute pool');
         if (pool) { if (!broker) throw new SessionError(503, 'run.compute.off'); await broker.poolConfig(pool); }
@@ -107,11 +110,14 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         }
         if ((await store.openCount(db, owner)) >= maxOpen) throw new SessionError(429, 'run.session.limit', `at most ${maxOpen} sessions at once: end one first`);
         const at = now();
+        const id = store.newSessionId();
         const row = {
-            id: store.newSessionId(), owner, via: via || null, kind: 'browser', state: 'placing',
+            id, owner, via: via || null, kind: 'browser', state: 'placing',
             width: body.width || 1280, height: body.height || 800, ttl_s: body.ttl_s || 3600, idle_s: body.idle_s || 900,
-            compute_pool: pool, compute_strategy: strategy, compute_decision: null, machine_asked: body.machine || null, requirements: body.requirements || null, idempotency_key: body.idempotency_key || null,
-            request_digest: digest, reasons: [], task_id: body.task_id || null, curtain: false, created_at: at, updated_at: at,
+            compute_pool: pool, compute_strategy: strategy, compute_decision: null, template, machine_asked: body.machine || null, requirements: body.requirements || null, idempotency_key: body.idempotency_key || null,
+            request_digest: digest, reasons: [], task_id: body.task_id || null, curtain: false,
+            control_lease: { thing: `run.session:${id}`, holder: { kind: 'person', subject: bare(owner) }, since_ms: at, expires_ms: at + 60_000, watchers: [], seq: 1 },
+            created_at: at, updated_at: at,
         };
         const out = await store.insert(db, row);
         if (out.created) setImmediate(() => { tick().catch((e) => log.warn(`[Run] session tick: ${e.message}`)); });
@@ -135,24 +141,129 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         });
     }
 
+    const HOLDER_MS = 60_000;
+    const ownerHolder = (row) => ({ kind: 'person', subject: bare(row.owner) });
+    const sameHolder = (a, b) => Boolean(a && b && a.kind === b.kind && a.subject === b.subject);
+    function actorHolder(actor, row) {
+        if (!actor) return ownerHolder(row);
+        if (actor.kind === 'person') return { kind: 'person', subject: String(actor.subject || bare(row.owner)) };
+        const kind = actor.kind === 'ai' ? 'ai' : null;
+        const subject = String(actor.subject || '').trim().slice(0, 200);
+        if (!kind || !subject) throw new SessionError(403, 'run.session.control_holder', 'the caller is not a named controller');
+        return { kind, subject };
+    }
+    async function saveLease(row, lease, reason) {
+        contracts.assertValid('common.control-lease@1', lease);
+        return db.tx(async (t) => {
+            const fresh = await store.get(t, row.id);
+            if (!fresh || fresh.state === 'ended') throw new SessionError(409, 'run.session.not_running', 'the session has ended');
+            const saved = await store.update(t, row.id, { control_lease: lease, updated_at: now() });
+            const prepared = outbox.events.prepare({
+                event_type: 'run.session.control_lease_changed', version: 1, source: 'run', actor: ACTOR,
+                timestamp: new Date(now()).toISOString(), subject: { type: 'session', id: row.id },
+                visibility: 'internal', priority: 'low', payload: { session_id: row.id, reason, lease },
+            }, { now: now() });
+            contracts.assertValid('events.event-envelope@1', prepared);
+            await t.maybe(`INSERT INTO ${EVENTS_TABLE} (event_id, envelope, created_at) VALUES ($1, $2, $3) ON CONFLICT (event_id) DO NOTHING RETURNING id`,
+                [`run:${row.id}:control-lease:${lease.seq}`, JSON.stringify(prepared), now()]);
+            return saved;
+        });
+    }
+    async function controlLease(row) {
+        let lease = row.control_lease || { thing: `run.session:${row.id}`, holder: ownerHolder(row), since_ms: Number(row.created_at), expires_ms: Number(row.created_at) + HOLDER_MS, watchers: [], seq: 1 };
+        contracts.assertValid('common.control-lease@1', lease);
+        if (lease.expires_ms != null && lease.expires_ms <= now()) {
+            lease = { ...lease, holder: { kind: 'nobody', subject: null }, since_ms: now(), expires_ms: null, seq: lease.seq + 1 };
+            row = await saveLease(row, lease, 'expired');
+        }
+        return row.control_lease || lease;
+    }
+    async function requestControl(row, actor) {
+        const current = await controlLease(row);
+        const target = actorHolder(actor, row);
+        if (sameHolder(current.holder, target)) return current;
+        if (current.holder.kind !== 'nobody') {
+            const prepared = outbox.events.prepare({ event_type: 'run.session.control_requested', version: 1, source: 'run', actor: ACTOR,
+                timestamp: new Date(now()).toISOString(), subject: { type: 'session', id: row.id }, visibility: 'internal', priority: 'low',
+                payload: { session_id: row.id, requester: target } }, { now: now() });
+            await db.maybe(`INSERT INTO ${EVENTS_TABLE} (event_id, envelope, created_at) VALUES ($1, $2, $3) ON CONFLICT (event_id) DO NOTHING RETURNING id`,
+                [`run:${row.id}:control-request:${target.kind}:${target.subject}:${Math.floor(now() / 1000)}`, JSON.stringify(prepared), now()]);
+            return current;
+        }
+        const next = { ...current, holder: target, since_ms: now(), expires_ms: now() + HOLDER_MS, seq: current.seq + 1 };
+        const saved = await saveLease(row, next, 'requested');
+        return saved.control_lease;
+    }
+    async function grantControl(row, target, reason = 'granted') {
+        const current = await controlLease(row);
+        if (!target || !['person', 'ai', 'nobody'].includes(target.kind)) throw new SessionError(422, 'run.session.control_target', 'target kind is person, ai or nobody');
+        const subject = target.kind === 'nobody' ? null : String(target.subject || '').trim().slice(0, 200);
+        if (target.kind !== 'nobody' && !subject) throw new SessionError(422, 'run.session.control_target', 'a person or AI controller needs a subject');
+        if (target.kind === 'person' && !require('openvibe-contracts').ids.isSubjectId('user', subject)) throw new SessionError(422, 'run.session.control_target', 'a person controller needs a Network usr_ subject');
+        const holder = { kind: target.kind, subject };
+        if (sameHolder(holder, current.holder)) return current;
+        const next = { ...current, holder, since_ms: now(), expires_ms: holder.kind === 'nobody' ? null : now() + HOLDER_MS, seq: current.seq + 1 };
+        const saved = await saveLease(row, next, reason);
+        if (holder.kind === 'person' && holder.subject !== bare(row.owner)) {
+            await db.maybe('INSERT INTO run_session_control_guests (session_id, subject, created_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING session_id', [row.id, holder.subject, now()]);
+        }
+        return saved.control_lease;
+    }
+    async function takeControl(row) { return grantControl(row, ownerHolder(row), 'owner_take_back'); }
+
     const RESULTS = new Set(['ack', 'nack', 'refused', 'expired']);
-    async function act(row, cmd) {
+    async function act(row, cmd, actor = null) {
         const v = contracts.validate('run.session-control-request@1', cmd);
         if (!v.valid) throw new SessionError(422, 'run.session.invalid', `invalid command: ${(v.errors && v.errors[0] && v.errors[0].message) || 'bad value'}`.slice(0, 300));
-        if (row.state !== 'running') throw new SessionError(409, 'run.session.not_running', row.state === 'ended' ? 'the session has ended' : 'the session\'s desk is not running yet');
         const id = cmd.id || `c-${now().toString(36)}`;
+        if (row.state !== 'running') throw new SessionError(409, 'run.session.not_running', row.state === 'ended' ? 'the session has ended' : 'the session\'s desk is not running yet');
+        const lease = await controlLease(row);
+        const caller = actorHolder(actor, row);
+        if (!sameHolder(lease.holder, caller)) {
+            await logAction(row, id, cmd, caller, 'refused', 'run.session.control_held');
+            throw new SessionError(403, 'run.session.control_held', 'only the current control holder may send commands');
+        }
         const r = await desks.act(row.machine, row.desk, bare(row.owner), { id, kind: cmd.kind, value: cmd.value });
         if (r === null) {
             const ended = await finish(row, 'host_lost', 'its machine no longer holds the desk', { release: false });
             return { session_id: row.id, id, result: 'refused', code: 'run.session.host_lost', reason: 'the session\'s machine went away', state: ended ? ended.state : 'ended' };
         }
-        await store.update(db, row.id, { last_used_at: now(), updated_at: now() });
+        const renewed = { ...lease, expires_ms: now() + HOLDER_MS };
+        if (renewed.expires_ms !== lease.expires_ms) await store.update(db, row.id, { control_lease: renewed, last_used_at: now(), updated_at: now() });
+        else await store.update(db, row.id, { last_used_at: now(), updated_at: now() });
         const out = { session_id: row.id, id: String(r.id || id).slice(0, 64), result: RESULTS.has(r.result) ? r.result : 'expired', state: 'running' };
         if (r.code != null) out.code = String(r.code).slice(0, 80);
         if (r.reason != null) out.reason = String(r.reason).slice(0, 1000);
         if (r.data && typeof r.data === 'object' && out.result === 'ack') out.data = r.data;
+        await logAction(row, out.id, cmd, caller, out.result, out.code || null);
         return out;
     }
+
+    async function logAction(row, id, cmd, actor, result, code) {
+        const kind = String(cmd.kind || 'unknown').slice(0, 40);
+        const action = kind === 'browser' && cmd.value && typeof cmd.value.action === 'string' ? cmd.value.action.slice(0, 48) : null;
+        await db.maybe(`INSERT INTO run_session_actions (session_id, command_id, kind, action, actor_kind, actor_subject, result, code, created_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`, [row.id, String(id).slice(0, 64), kind, action, actor.kind,
+            String(actor.subject || '').slice(0, 200), String(result).slice(0, 24), code ? String(code).slice(0, 80) : null, now()]);
+    }
+    async function timeline(row, limit = 50, before = null) {
+        const n = Math.min(100, Math.max(1, Number(limit) || 50));
+        const args = [row.id];
+        const cursor = Number(before);
+        const where = before && Number.isInteger(cursor) ? ` AND id < $${args.push(cursor)}` : '';
+        args.push(n + 1);
+        const rows = await db.many(`SELECT id, command_id, kind, action, actor_kind, actor_subject, result, code, created_at
+            FROM run_session_actions WHERE session_id = $1${where} ORDER BY id DESC LIMIT $${args.length}`, args);
+        const more = rows.length > n;
+        const actions = rows.slice(0, n).map((a) => ({ id: Number(a.id), command_id: a.command_id, kind: a.kind, action: a.action,
+            actor: { kind: a.actor_kind, subject: a.actor_subject }, result: a.result, code: a.code, at: new Date(Number(a.created_at)).toISOString() }));
+        return { actions, next_cursor: more ? String(actions.at(-1).id) : null };
+    }
+    async function isGuest(row, subject) {
+        if (!row || !subject || String(subject) === bare(row.owner)) return false;
+        return Boolean(await db.maybe('SELECT 1 FROM run_session_control_guests WHERE session_id = $1 AND subject = $2', [row.id, String(subject)]));
+    }
+    function snapshot() { return { available: false, message: 'Snapshots are not available on this machine.' }; }
 
     /**
      * The session's newest frame, as a small JPEG (plan 2026-11-07: the live still Surf's card shows and the Dock
@@ -274,6 +385,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
                     continue;
                 }
                 // running
+                await controlLease(row);
                 if (now() - row.created_at >= row.ttl_s * 1000) { await finish(row, 'ttl', `its ${row.ttl_s} s ran out`); continue; }
                 if (now() - (row.last_used_at || row.started_at) >= row.idle_s * 1000) { await finish(row, 'idle', `no command for ${row.idle_s} s`); continue; }
                 if (now() - (row.lease_checked_at || 0) >= leaseCheckMs) {
@@ -300,7 +412,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
     }
 
     return {
-        create, act, finish, still, setCurtain, tick, SessionError,
+        create, act, finish, still, setCurtain, requestControl, grantControl, takeControl, controlLease, timeline, isGuest, snapshot, tick, SessionError,
         get: (id) => store.get(db, id),
         list: (owner, opts) => store.listOf(db, owner, opts),
         present: (row) => store.present(row, now()),

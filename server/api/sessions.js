@@ -35,21 +35,21 @@ function sessionsRouter({ sessions }) {
     function who(req, res, cap) {
         const p = req.principal || { kind: 'anonymous' };
         if (p.kind === 'anonymous') { problem(res, req, 401, 'token.required', `${cap} needs your OpenVibe sign-in, or a first-party service acting for you`); return null; }
-        if (p.kind === 'user') return { owner: `user:${p.subject}`, via: null };
+        if (p.kind === 'user') return { owner: `user:${p.subject}`, via: null, actor: { kind: 'person', subject: p.subject } };
         const sub = String(p.sub || '');
         if (!sub.startsWith('svc:')) { problem(res, req, 403, 'capability.denied', 'a session is opened by its person, or by a first-party service acting for them'); return null; }
         const decision = capabilities.check(p.claims, cap);
         if (!decision.allowed) { problem(res, req, 403, decision.code || 'capability.denied', decision.reason || `${cap} not granted`); return null; }
         const subject = String(req.get('X-OV-Subject') || '').trim();
         if (!USER_SUBJECT.test(subject) || !ids.isSubjectId('user', subject)) { problem(res, req, 422, 'run.session.subject_required', 'a service opens a session for a person: X-OV-Subject usr_…'); return null; }
-        return { owner: `user:${subject}`, via: `service:${sub.slice(4)}` };
+        return { owner: `user:${subject}`, via: `service:${sub.slice(4)}`, actor: { kind: 'ai', subject: sub } };
     }
-    async function mine(req, res, cap) {
+    async function mine(req, res, cap, allowGuest = false) {
         const w = who(req, res, cap);
         if (!w) return null;
         const id = String(req.params.id || '');
         const row = SESSION_RE.test(id) ? await sessions.get(id) : null;
-        if (!row || row.owner !== w.owner) { problem(res, req, 404, 'run.session.not_found', 'no such session of yours'); return null; }
+        if (!row || (row.owner !== w.owner && !(allowGuest && w.actor.kind === 'person' && await sessions.isGuest(row, w.actor.subject)))) { problem(res, req, 404, 'run.session.not_found', 'no such session of yours'); return null; }
         return row;
     }
     /**
@@ -80,7 +80,7 @@ function sessionsRouter({ sessions }) {
     r.post('/sessions', wrap(async (req, res) => {
         const w = who(req, res, 'run.session.create');
         if (!w) return;
-        const { row, created } = await sessions.create(w.owner, w.via, req.body && typeof req.body === 'object' ? req.body : {}, { pool: req.query.pool, strategy: req.query.strategy });
+        const { row, created } = await sessions.create(w.owner, w.via, req.body && typeof req.body === 'object' ? req.body : {}, { pool: req.query.pool, strategy: req.query.strategy, template: req.query.template });
         res.status(created ? 201 : 200).json(sessions.present(row));
     }));
     r.get('/sessions', wrap(async (req, res) => {
@@ -96,9 +96,41 @@ function sessionsRouter({ sessions }) {
         if (row) res.json(req.query.explain === '1' ? { ...sessions.present(row), compute: row.compute_decision || null } : sessions.present(row));
     }));
     r.post('/sessions/:id/commands', wrap(async (req, res) => {
+        const row = await mine(req, res, 'run.session.control', true);
+        if (!row) return;
+        const w = who(req, res, 'run.session.control');
+        if (!w) return;
+        res.json(await sessions.act(row, req.body && typeof req.body === 'object' ? req.body : {}, w.actor));
+    }));
+    r.post('/sessions/:id/control/request', wrap(async (req, res) => {
+        const row = await mine(req, res, 'run.session.control', true);
+        if (!row) return;
+        const w = who(req, res, 'run.session.control');
+        if (!w) return;
+        res.json({ lease: await sessions.requestControl(row, w.actor) });
+    }));
+    r.get('/sessions/:id/control', wrap(async (req, res) => {
+        const row = await mine(req, res, 'run.session.read', true);
+        if (row) res.json({ lease: await sessions.controlLease(row) });
+    }));
+    r.get('/sessions/:id/timeline', wrap(async (req, res) => {
+        const row = await mine(req, res, 'run.session.read');
+        if (row) res.json(await sessions.timeline(row, req.query.limit, req.query.before));
+    }));
+    r.get('/sessions/:id/snapshot', wrap(async (req, res) => {
+        const row = await mine(req, res, 'run.session.read');
+        if (row) res.json(sessions.snapshot(row));
+    }));
+    r.post('/sessions/:id/control/grant', wrap(async (req, res) => {
         const row = await mine(req, res, 'run.session.control');
         if (!row) return;
-        res.json(await sessions.act(row, req.body && typeof req.body === 'object' ? req.body : {}));
+        const target = req.body && req.body.holder;
+        res.json({ lease: await sessions.grantControl(row, target) });
+    }));
+    r.post('/sessions/:id/control/take', wrap(async (req, res) => {
+        const row = await mine(req, res, 'run.session.control');
+        if (!row) return;
+        res.json({ lease: await sessions.takeControl(row) });
     }));
     r.post('/sessions/:id/end', wrap(async (req, res) => {
         const row = await mine(req, res, 'run.session.control');
