@@ -43,7 +43,7 @@ class SessionError extends Error {
     constructor(status, code, detail) { super(detail || code); this.status = status; this.code = code; this.detail = detail; }
 }
 
-function createSessions({ config, db, desks, outbox, now = () => Date.now(), log = console }) {
+function createSessions({ config, db, desks, outbox, now = () => Date.now(), log = console, broker = null }) {
     const cfg = config.sessions || {};
     const tickMs = cfg.tickMs || 2000;
     const leaseCheckMs = cfg.leaseCheckMs || 30_000;
@@ -88,10 +88,16 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
     }
 
     // ── create, act, finish ───────────────────────────────────────────────────────────────────────────────────
-    async function create(owner, via, body) {
+    async function create(owner, via, body, compute = {}) {
+        if (compute.pool && (typeof compute.pool !== 'string' || !/^[a-z0-9-]{1,40}$/.test(compute.pool))) throw new SessionError(422, 'run.compute.pool', 'invalid compute pool');
+        const pool = compute.pool || null;
+        const strategy = compute.strategy || null;
+        if (strategy && !require('openvibe-sdk/compute').STRATEGIES.includes(strategy)) throw new SessionError(422, 'run.compute.strategy', 'unknown compute strategy');
+        if (strategy && !pool) throw new SessionError(422, 'run.compute.pool', 'a strategy requires a compute pool');
+        if (pool) { if (!broker) throw new SessionError(503, 'run.compute.off'); await broker.poolConfig(pool); }
         const v = contracts.validate('run.session-create-request@1', body);
         if (!v.valid) throw new SessionError(422, 'run.session.invalid', `invalid session request: ${(v.errors && v.errors[0] && v.errors[0].message) || 'bad value'}`.slice(0, 300));
-        const digest = store.digestOf(body);
+        const digest = store.digestOf(pool ? { ...body, compute_pool: pool, compute_strategy: strategy } : body);
         if (body.idempotency_key) {
             const earlier = await db.maybe('SELECT * FROM run_sessions WHERE owner = $1 AND idempotency_key = $2 AND created_at > $3', [owner, body.idempotency_key, now() - 86_400_000]);
             if (earlier) {
@@ -104,7 +110,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         const row = {
             id: store.newSessionId(), owner, via: via || null, kind: 'browser', state: 'placing',
             width: body.width || 1280, height: body.height || 800, ttl_s: body.ttl_s || 3600, idle_s: body.idle_s || 900,
-            machine_asked: body.machine || null, requirements: body.requirements || null, idempotency_key: body.idempotency_key || null,
+            compute_pool: pool, compute_strategy: strategy, compute_decision: null, machine_asked: body.machine || null, requirements: body.requirements || null, idempotency_key: body.idempotency_key || null,
             request_digest: digest, reasons: [], task_id: body.task_id || null, curtain: false, created_at: at, updated_at: at,
         };
         const out = await store.insert(db, row);
@@ -219,14 +225,20 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         if (now() - row.created_at >= row.ttl_s * 1000) return finish(row, 'unplaceable', 'no machine had room before the session\'s time ran out', { release: false });
         let hosts;
         try { hosts = await hostsFor(bare(row.owner)); } catch (e) { if (!e.retryable) log.warn(`[Run] session ${row.id}: desk hosts: ${e.code}`); return row; }
-        const list = candidates(row, hosts);
+        if (broker) hosts = await broker.available(hosts);
+        let list = candidates(row, hosts);
+        let decision = null;
+        if (row.compute_pool && broker) {
+            decision = await broker.decide(row, hosts);
+            list = decision.selected ? hosts.filter(h => h.machine_id === decision.selected) : [];
+        }
         if (!list.length) {
             if (row.machine_asked && !hosts.some((h) => h.machine_id === row.machine_asked)) return finish(row, 'unplaceable', 'that machine is not open to your agent (or it runs no browser desks)', { release: false });
             return row;
         }
         const desk = store.deskOf(row.id);
         for (const h of list) {
-            await store.update(db, row.id, { state: 'starting', machine: h.machine_id, desk, trust: h.trust, offer_id: h.shared ? `desk:${h.machine_id}` : null, reasons: reasonsOf(row, h), updated_at: now() });
+            await store.update(db, row.id, { state: 'starting', machine: h.machine_id, desk, trust: h.trust, offer_id: h.shared ? `desk:${h.machine_id}` : null, reasons: [...reasonsOf(row, h), ...(decision ? [...decision.reasons, `estimated ${decision.hourly} ${decision.currency}/hour`] : [])], compute_decision: decision, updated_at: now() });
             let lease;
             try {
                 lease = await desks.lease(h.machine_id, bare(row.owner), { session: row.id, desk, kind: 'browser', width: row.width, height: row.height });

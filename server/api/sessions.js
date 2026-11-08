@@ -80,7 +80,7 @@ function sessionsRouter({ sessions }) {
     r.post('/sessions', wrap(async (req, res) => {
         const w = who(req, res, 'run.session.create');
         if (!w) return;
-        const { row, created } = await sessions.create(w.owner, w.via, req.body && typeof req.body === 'object' ? req.body : {});
+        const { row, created } = await sessions.create(w.owner, w.via, req.body && typeof req.body === 'object' ? req.body : {}, { pool: req.query.pool, strategy: req.query.strategy });
         res.status(created ? 201 : 200).json(sessions.present(row));
     }));
     r.get('/sessions', wrap(async (req, res) => {
@@ -93,7 +93,7 @@ function sessionsRouter({ sessions }) {
     }));
     r.get('/sessions/:id', wrap(async (req, res) => {
         const row = await mine(req, res, 'run.session.read');
-        if (row) res.json(sessions.present(row));
+        if (row) res.json(req.query.explain === '1' ? { ...sessions.present(row), compute: row.compute_decision || null } : sessions.present(row));
     }));
     r.post('/sessions/:id/commands', wrap(async (req, res) => {
         const row = await mine(req, res, 'run.session.control');

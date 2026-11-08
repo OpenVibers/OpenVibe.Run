@@ -39,7 +39,7 @@
  * answer with no eligible candidate is null, which the poller settles run.job.unplaceable.
  */
 const contracts = require('openvibe-contracts');
-const { place, optionKey } = require('openvibe-sdk/placement');
+const { place, plan, optionKey } = require('openvibe-sdk/placement');
 const { createServiceTokenClient } = require('openvibe-sdk/auth');
 const { requirementsDefault } = require('../util');
 const { PROVIDER: BROWSER_PROVIDER } = require('./browser-provider');
@@ -106,7 +106,7 @@ const personOf = (requester) => (/^user:(usr_[0-9A-HJKMNP-TV-Z]{26})$/.exec(Stri
  * createPlacement({ config, fetchImpl, now, log, providers }) → { choose, offers, status }. `providers` maps
  * the name of each external adapter that is on to the classes it runs ({ 'browser-provider': ['browser'] }).
  */
-function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Date.now(), log = console, providers = {}, outcomes = null, priors = null } = {}) {
+function createPlacement({ config, db = null, fetchImpl = globalThis.fetch, now = () => Date.now(), log = console, providers = {}, outcomes = null, priors = null } = {}) {
     const { url } = config.network;
     const offersUrlOf = (kind) => `${url}/api/v1/offers?kind=${kind}`;
     const offersUrl = offersUrlOf('node');
@@ -192,6 +192,7 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
             return { ok: false, code: 'run.job.node_offline', detail: 'node must be a machine id (dev_…)' };
         }
         const age = fresh ? 0 : offersTtlMs;
+        if (db && await db.maybe("SELECT id FROM run_compute_rentals WHERE machine=$1 AND state IN ('draining','releasing','uncertain') LIMIT 1", [nodeId])) return { ok: false, code: 'run.job.node_offline', detail: 'the machine is draining' };
         const offer = [...(await offers('node', { maxAgeMs: age })), ...(await ownedOffers({ maxAgeMs: age }))]
             .find((o) => o && o.kind === 'node' && o.node_id === nodeId);
         if (!offer) return { ok: false, code: 'run.job.node_offline', detail: `machine ${nodeId} is not connected to Run` };
@@ -230,7 +231,7 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
         // names user-owned (contracts 0.161.0). The public list carries none; one that slipped in is never used, since
         // only the internal read states the owner this rule needs.
         const trusted = (o) => (o.capabilities || []).includes(want) && o.trust !== 'user-owned';
-        const candidates = (await offers('node')).filter((o) => o.kind === 'node'
+        let candidates = (await offers('node')).filter((o) => o.kind === 'node'
             && typeof o.node_id === 'string' && o.node_id.length > 0
             && !EXTERNAL_PROVIDERS.has(o.provider)
             && trusted(o));
@@ -249,6 +250,31 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
         if (!candidates.length) return null;
         const req = { ...requirements, capabilities: [...new Set([...(requirements.capabilities || []), want])] };
         contracts.assertValid('platform.workload-requirements@1', req);
+        let computeDecision = null;
+        if (db) {
+            const draining = new Set((await db.many("SELECT machine FROM run_compute_rentals WHERE state IN ('draining','releasing','uncertain')")).map(r => r.machine));
+            candidates = candidates.filter(o => !draining.has(o.node_id));
+        }
+        const poolId = config.compute && config.compute.job_pool;
+        const pool = poolId && config.compute.pools[poolId];
+        if (pool) {
+            const saved = db && await db.maybe('SELECT strategy FROM run_compute_pools WHERE id=$1', [poolId]);
+            const hard = plan(req, candidates, { now: now() });
+            const eligible = new Set(hard.candidates.filter(c => c.eligible).map(c => c.id));
+            const ms = candidates.filter(o => eligible.has(o.offer_id)).map(o => {
+                const v = config.compute.inventory[o.node_id] || {};
+                return { ...v, id: o.offer_id, owner: o.owner, tier: o.trust === 'user-owned' ? 'own' : o.trust === 'community' ? 'community' : o.trust === 'first-party' ? (v.tier || 'dedicated') : 'partner',
+                    health: o.health.status, region: o.region, currency: v.currency || 'USD', hourly: v.hourly ?? (o.trust === 'user-owned' ? 0 : null),
+                    free_ram_mb: o.capacity?.memory?.available_mb ?? v.free_ram_mb ?? 0,
+                    free_slots: o.capacity?.workers?.[row.class] ?? v.free_slots ?? 0,
+                    latency_ms: o.latency_ms?.p95, gpu_mb: o.capacity?.gpu?.memory_mb ?? v.gpu_mb };
+            });
+            const strategy = { cheapest: 'cheapest', 'lowest-latency': 'fastest', private: 'private', 'first-party-only': 'private' }[req.objective] || saved?.strategy || pool.strategy;
+            computeDecision = require('openvibe-sdk/compute').choose({ strategy, owner: person, kind: row.class,
+                ram_mb: req.resources?.memory_mb, region: req.region, public_egress: pool.public_egress !== false }, ms, pool, { now: now() });
+            candidates = candidates.filter(o => o.offer_id === computeDecision.selected);
+        }
+
         // Placement A1: Bench's priors per option key (an hour's cache), the person's learned counts (one read) and the
         // job's class as the step kind. An unreadable table or a quiet Bench leaves the defaults, never a failed placement.
         const learned = outcomes && person ? await outcomes.forPerson(person) : [];
@@ -274,7 +300,7 @@ function createPlacement({ config, fetchImpl = globalThis.fetch, now = () => Dat
             // A provider offer has no device: its own id stands for where the job went (the read result's node).
             node_id: chosen.kind === 'provider' ? (chosen.node_id || chosen.offer_id) : chosen.node_id,
             provider: chosen.provider ?? null, region: chosen.region ?? null, kind: chosen.kind,
-            offer_id: chosen.offer_id, trust: chosen.trust, reasons: result.reasons,
+            offer_id: chosen.offer_id, trust: chosen.trust, reasons: [...result.reasons, ...(computeDecision ? [...computeDecision.reasons, `estimated ${computeDecision.hourly} ${computeDecision.currency}/hour`] : [])],
             option_key: optionKey(chosen), step_kind: row.class,
             explain: publicExplain({ line: placed.line, ranked: placed.ranked, rejected: placed.rejected }),
         };
