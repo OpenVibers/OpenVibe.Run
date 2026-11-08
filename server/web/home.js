@@ -72,7 +72,7 @@ const SUBMIT_EXAMPLE = `curl -X POST https://openvibe.run/api/v1/jobs \\
 function renderHome({ config }) {
     const nav = {
         service: 'run',
-        apiBase: NETWORK_URL,
+        apiBase: NETWORK_URL, sessionUrl: '/auth/me', loginUrl: '/auth/login?next={path}', logoutUrl: '/auth/logout?next={url}', silentLogin: '/auth/login?silent=1&next={url}',
         links: [{ label: 'Your machine', href: '#machine' }, { label: 'How it works', href: '#how' }, { label: 'API', href: '#api' }],
         history: { type: 'page', title: SITE_NAME },
     };
@@ -105,7 +105,7 @@ function renderUpdates({ config }) {
         siteName: SITE_NAME, description: `Every change deployed to ${SITE_NAME}, newest first.`,
         canonical: `${config.baseUrl}/updates`, robots: 'index, follow',
         agentLayer: true, llms: `${config.baseUrl}/llms.txt`,
-        navbar: { service: 'run', apiBase: NETWORK_URL, links, history: { type: 'page', title: SITE_NAME } },
+        navbar: { service: 'run', apiBase: NETWORK_URL, sessionUrl: '/auth/me', loginUrl: '/auth/login?next={path}', logoutUrl: '/auth/logout?next={url}', silentLogin: '/auth/login?silent=1&next={url}', links, history: { type: 'page', title: SITE_NAME } },
         footer: FOOTER, home: '/', navLinks: links,
         head: [appIcon.headTags({ site: 'run' }), '<link rel="manifest" href="/manifest.webmanifest">', `<link rel="apple-touch-icon" href="${require('openvibe-shared/app-icons').url('run', 192)}">`, UPDATES_FONT].join('\n'),
         body: `<div id="navbar-mount"></div>\n<main id="main" class="page">\n${frame.updatesBody({ service: 'run', siteName: SITE_NAME })}\n</main>\n<script src="${ovServe.url('shipped.js')}" defer></script>`,
@@ -121,7 +121,7 @@ function renderNotFound({ config }) {
         title: `Page not found · ${SITE_NAME}`,
         siteName: SITE_NAME, description: `There is no page at this address on ${host}.`,
         robots: 'noindex, follow',
-        navbar: { service: 'run', apiBase: NETWORK_URL, links, history: { type: 'page', title: SITE_NAME } },
+        navbar: { service: 'run', apiBase: NETWORK_URL, sessionUrl: '/auth/me', loginUrl: '/auth/login?next={path}', logoutUrl: '/auth/logout?next={url}', silentLogin: '/auth/login?silent=1&next={url}', links, history: { type: 'page', title: SITE_NAME } },
         footer: FOOTER, home: '/', navLinks: links,
         head: [appIcon.headTags({ site: 'run' }), '<link rel="manifest" href="/manifest.webmanifest">',
             `<link rel="apple-touch-icon" href="${require('openvibe-shared/app-icons').url('run', 192)}">`,
