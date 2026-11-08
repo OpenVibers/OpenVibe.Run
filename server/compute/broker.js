@@ -23,12 +23,13 @@ function createBroker({db,config,desks,now=Date.now,fetchImpl=globalThis.fetch,a
    const rental=rentals.find(r=>r.machine===h.machine_id);
    const rented=rental?obj(rental.quote):{};
    const v={...(rental?{pool:rental.pool,ram_mb:rented.ram_mb,region:rented.region,tier:rented.tier}:{}),...(cfg.inventory[h.machine_id] || {})};
+   const ramPerSession=Math.max(cfg.pools[v.pool]?.kind==='desktop'?2048:300,Number(v.measured_peak_ram_mb) || 0,Number(cfg.pools[v.pool]?.measured_peak_ram_mb) || 0);
    const sessions=Math.max(counts.find(c=>c.machine===h.machine_id)?.n || 0,(h.max_browser_desks || 0)-(h.free || 0))+(jobs.find(j=>j.node_id===h.machine_id)?.n || 0);
    return {...v,id:h.machine_id,owner:h.trust==='user-owned'?bare(owner):null,
     tier:rental?(rented.tier || 'partner'):h.trust==='user-owned'?'own':h.trust==='community'?'community':h.trust==='first-party'?(v.tier || 'dedicated'):'partner',
     hourly:rental?Number(rental.hourly_micros)/1e6:(h.trust==='user-owned'?0:v.hourly ?? null),currency:rental?.currency || v.currency || 'USD',
     health:h.online?'up':'down',free_slots:Number(h.free) || 0,
-    free_ram_mb:Number(h.free_ram_mb ?? (v.ram_mb!=null?Math.max(0,v.ram_mb-1024-sessions*Math.max(300,v.measured_peak_ram_mb || 300)):0)),
+    free_ram_mb:Number(h.free_ram_mb ?? (v.ram_mb!=null?Math.max(0,v.ram_mb-1024-sessions*ramPerSession):0)),
     sessions,draining:rental?['draining','releasing','uncertain'].includes(rental.state):Boolean(v.draining),managed:Boolean(rental),
     state:rental?.state || 'running',idle_since:rental?.idle_since==null?undefined:Number(rental.idle_since)};
   });

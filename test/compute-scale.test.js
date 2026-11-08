@@ -15,7 +15,19 @@ const {createBroker}=require('../server/compute/broker');
   if(scenario==='cap fallback')config.compute.providers.hetzner.monthly_cap='0.01';
   if(scenario==='missing key')config.compute.providers.hetzner.key='';
   const broker=createBroker({db:t.db,config,adapters,desks:{enabled:true,hosts:async()=>[]},now:()=>now});
-  try {await broker.tick();assert.deepEqual(created,['ovh'],scenario);}
+  try {
+   await broker.tick();assert.deepEqual(created,['ovh'],scenario);
+   if(scenario==='total price') {
+    config.compute.inventory.m={pool:'workers',ram_mb:8192};
+    const hosts=[{machine_id:'m',trust:'user-owned',online:true,max_browser_desks:4,free:2}];
+    config.compute.pools.workers.kind='desktop';
+    assert.equal((await broker.inventory(hosts,'alice'))[0].free_ram_mb,3072,'occupied desktops use the 2 GB floor');
+    config.compute.pools.workers.measured_peak_ram_mb=3000;
+    assert.equal((await broker.inventory(hosts,'alice'))[0].free_ram_mb,1168,'higher measured peaks reduce remaining capacity');
+    config.compute.pools.workers.kind='browser';config.compute.pools.workers.measured_peak_ram_mb=900;
+    assert.equal((await broker.inventory(hosts,'alice'))[0].free_ram_mb,5368,'browser pools use their measured peak');
+   }
+  }
   finally {await t.close();}
  }
  console.log('autoscaler selects total cost, falls back on capped or unconfigured providers, and enforces GPU fit: passed');
