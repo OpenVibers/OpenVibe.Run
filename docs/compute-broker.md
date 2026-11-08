@@ -73,9 +73,14 @@ committed budget and cap; `?format=json` gives the same data. Only allowlisted s
 can read it. Strategy forms require same-origin writes. Quotes are at
 `GET /api/v1/compute/pools/:pool/quotes`; they never spend.
 
-After a prepared worker enrolls with Link/Bot, put its machine id in trusted inventory and bind it
+A prepared worker that enrolls a fresh Link identity under `RUN_COMPUTE_OWNER` and reports the
+provider-assigned rental label as its machine name is bound automatically. Bot must identify it
+as that owner's own machine; community/shared name claims are never accepted. Its quote supplies
+the pool and RAM inventory. The image's enrollment mechanism is an operator prerequisite.
+
+For workers without this naming integration, put the machine id in trusted inventory and bind it
 with `POST /api/v1/compute/rentals/:id/bind`, JSON `{ "machine": "dev_…" }`, as the operator with
-an Origin matching Run. Automatic secure enrollment is not implemented here. Unbound rentals
+an Origin matching Run. Automatic secure enrollment itself is not implemented here; do not bake reusable Node credentials into an image. Unbound rentals
 count as starting capacity and are deleted at their deadline; never regarded as usable desktops.
 
 Ordinary scale-down marks a host draining, excludes it from placement, waits for zero sessions,

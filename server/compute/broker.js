@@ -20,12 +20,13 @@ function createBroker({db,config,desks,now=Date.now,fetchImpl=globalThis.fetch,a
   const counts=await db.many("SELECT machine, count(*)::int AS n FROM run_sessions WHERE state IN ('running','starting') AND machine IS NOT NULL GROUP BY machine");
   const jobs=await db.many("SELECT node_id,count(*)::int AS n FROM run_jobs WHERE state IN ('placed','running') GROUP BY node_id");
   return hosts.map(h=>{
-   const v=cfg.inventory[h.machine_id] || {};
    const rental=rentals.find(r=>r.machine===h.machine_id);
+   const rented=rental?obj(rental.quote):{};
+   const v={...(rental?{pool:rental.pool,ram_mb:rented.ram_mb,region:rented.region,tier:rented.tier}:{}),...(cfg.inventory[h.machine_id] || {})};
    const sessions=Math.max(counts.find(c=>c.machine===h.machine_id)?.n || 0,(h.max_browser_desks || 0)-(h.free || 0))+(jobs.find(j=>j.node_id===h.machine_id)?.n || 0);
    return {...v,id:h.machine_id,owner:h.trust==='user-owned'?bare(owner):null,
-    tier:h.trust==='user-owned'?'own':h.trust==='community'?'community':h.trust==='first-party'?(v.tier || 'dedicated'):'partner',
-    hourly:h.trust==='user-owned'?0:(rental?Number(rental.hourly_micros)/1e6:v.hourly ?? null),currency:rental?.currency || v.currency || 'USD',
+    tier:rental?(rented.tier || 'partner'):h.trust==='user-owned'?'own':h.trust==='community'?'community':h.trust==='first-party'?(v.tier || 'dedicated'):'partner',
+    hourly:rental?Number(rental.hourly_micros)/1e6:(h.trust==='user-owned'?0:v.hourly ?? null),currency:rental?.currency || v.currency || 'USD',
     health:h.online?'up':'down',free_slots:Number(h.free) || 0,
     free_ram_mb:Number(h.free_ram_mb ?? (v.ram_mb!=null?Math.max(0,v.ram_mb-1024-sessions*Math.max(300,v.measured_peak_ram_mb || 300)):0)),
     sessions,draining:rental?['draining','releasing','uncertain'].includes(rental.state):Boolean(v.draining),managed:Boolean(rental),
@@ -153,6 +154,16 @@ function createBroker({db,config,desks,now=Date.now,fetchImpl=globalThis.fetch,a
   }
   if(!cfg.enabled || !cfg.owner || !desks.enabled) return;
   let hosts; try {hosts=await desks.hosts(cfg.owner);} catch {return;}
+  // Bot returns a name only for this authenticated owner's own machines. A community seller cannot
+  // claim a paid rental by copying its label. The prepared image must enroll a fresh Link identity.
+  for(const r of await live()) {
+   if(r.state!=='starting' || r.machine || !r.remote_id)continue;
+   const matches=hosts.filter(h=>h.trust==='user-owned' && h.name===r.id && h.online);
+   if(matches.length!==1)continue;
+   const updated=await db.maybe("UPDATE run_compute_rentals SET machine=$2,state='running' WHERE id=$1 AND machine IS NULL AND state='starting' RETURNING id",[r.id,matches[0].machine_id]);
+   if(updated)await journal('machine.bound',{machine:matches[0].machine_id,source:'authenticated owner host label'},r);
+  }
+
   for(const id of Object.keys(cfg.pools)) {
    const p=await poolConfig(id);
    const all=await inventory(hosts,cfg.owner);
