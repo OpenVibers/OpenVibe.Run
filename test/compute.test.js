@@ -27,6 +27,8 @@ const {loadCompute}=require('../server/compute/config');
   assert.match((await broker.provision('browsers',q)).reason,/cap/,'restart retains reservation');
   time+=3600000;await broker.tick();assert.equal(removed,1);
   let state=await broker.status();assert.equal(state.rentals[0].state,'releasing');assert.equal(state.budgets[0].committed_micros,'2000000');
+  q.expires_at=time+60000;
+  assert.match((await broker.provision('browsers',q)).reason,/unresolved/,'unconfirmed release blocks new provider spending');
   deleted=true;await broker.tick();state=await broker.status();assert.equal(state.rentals[0].state,'released');assert.equal(state.rentals[0].spent_micros,'1000000');
   assert.ok(state.journal.some(j=>j.event==='release.confirmed'));
   config.compute.providers.hetzner.monthly_cap='10';

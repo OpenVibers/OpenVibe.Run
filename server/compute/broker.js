@@ -77,7 +77,7 @@ function createBroker({db,config,desks,now=Date.now,fetchImpl=globalThis.fetch,a
    const poolRows=await t.many("SELECT id FROM run_compute_rentals WHERE pool=$1 AND state <> 'released'",[pool]);
    if(poolRows.length >= (p.max_machines ?? 10)) return {reason:'pool machine limit reached'};
    const rows=await t.many("SELECT * FROM run_compute_rentals WHERE provider=$1 AND (month=$2 OR state <> 'released')",[q.provider,month()]);
-   if(rows.some(r=>r.state==='uncertain')) return {reason:'an unresolved provider call blocks new rentals'};
+   if(rows.some(r=>['uncertain','releasing'].includes(r.state))) return {reason:'an unresolved provider call blocks new rentals'};
    const settled=await t.value('SELECT COALESCE(SUM(c.amount_micros),0) FROM run_compute_charges c JOIN run_compute_rentals r ON r.id=c.rental WHERE r.provider=$1 AND c.month=$2',[q.provider,month()]);
    const committed=BigInt(settled)+rows.filter(r=>r.state!=='released').reduce((sum,r)=>sum+BigInt(r.reserved_micros),0n);
    if(committed+reserved>cap) return {reason:'monthly cap reached'};

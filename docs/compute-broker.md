@@ -61,6 +61,7 @@ inference offers are not hourly machine rentals; use AI's existing routing or an
 The broker reserves a bounded runtime (at most one hour) plus a deletion allowance before calling
 a provider. Integer micro-currency arithmetic and database locks serialize cap checks. Unknown
 creation outcomes block new rentals and retain their reservation across restarts and months.
+A pending release also blocks new purchases from that provider until deletion is confirmed.
 Every provision, release, drain and strategy change is journalled. Deletion must be confirmed by
 provider health before releasing the reservation; a refused deletion continues to accrue cost and
 can exceed a reservation. The journal flags this. No software can guarantee an upstream provider
