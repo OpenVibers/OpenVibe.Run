@@ -108,6 +108,7 @@ function createApp(opts = {}) {
 
     app.use(http.middleware());
     app.use(cookieParser());
+    app.use('/auth', require('./web-sso').webSso({ config, fetchImpl, log }));
 
     // Liveness: the process answers. What it can and cannot do is /api/ready's job, and the counts are
     // /metrics' and /api/ready's — this route says nothing it cannot back with a value it just read.
