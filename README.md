@@ -256,3 +256,7 @@ until Run has a product surface; the vhost below is installed then.
 - openvibe-sdk: v0.94.0
 - openvibe-shared: v4.150.0
 <!-- versions:end -->
+
+Compute placement, pool autoscaling, rental caps and the operator view are documented in
+[docs/compute-broker.md](docs/compute-broker.md). Rentals default to quote-only; keys and caps
+are never inferred from available credentials.

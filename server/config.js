@@ -34,6 +34,7 @@ function loadConfig(env = process.env) {
     const networkUrl = trim(env.OV_NETWORK_URL || 'https://openvibe.network');
     const baseUrl = trim(env.BASE_URL || (isProduction ? 'https://openvibe.run' : `http://localhost:${port}`));
     return {
+        compute: require('./compute/config').loadCompute(env),
         nodeEnv,
         isProduction,
         port,

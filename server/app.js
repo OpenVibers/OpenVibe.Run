@@ -62,7 +62,16 @@ function createApp(opts = {}) {
     const apiAuth = createApiAuth({ config, keys, userAuth, membership, log });
     // Run sessions (contracts 0.223.0): browser desks Bot leases per session; the tick starts in server/index.js.
     const desks = opts.desks || createDeskClient({ config, fetchImpl, now });
-    const sessions = opts.sessions || createSessions({ config, db, desks, outbox, now, log });
+    const broker = opts.broker || require('./compute/broker').createBroker({ config, db, desks, now, fetchImpl, log });
+    const sessions = opts.sessions || createSessions({ config, db, desks, outbox, now, log, broker });
+    broker.attachSessions(async (id) => { const row = await sessions.get(id); if (row) await sessions.finish(row, 'ttl', 'compute rental budget exhausted'); });
+    broker.attachJobs(async (machine) => {
+        const jobs = require('./jobs/store');
+        for (const row of await db.many("SELECT * FROM run_jobs WHERE node_id=$1 AND state IN ('placed','running')", [machine])) {
+            const result = await jobs.cancel(db, row.id, row.project_id, now());
+            if (result.row) await dispatch.cancel(result.row);
+        }
+    });
     const release = require('openvibe-shared/release').createRelease({ service: 'run', root: path.join(__dirname, '..') });
 
     const app = express();
@@ -119,6 +128,7 @@ function createApp(opts = {}) {
         express.json({ limit: JSON_LIMIT }),
         (req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); },
         apiAuth.middleware,
+        require('./compute/routes').computeRouter({ broker, config }),
         sessionsRouter({ sessions }),
         v1Router({ config, db, apiAuth, stream, tickets, events, dispatch, now, log }));
 
@@ -201,7 +211,7 @@ function createApp(opts = {}) {
         return res.status(500).type('text/plain').send('Something went wrong\n');
     });
 
-    Object.assign(app.locals, { config, db, indexnow, valkey, keys, outbox, events, stream, tickets, dispatch, apiAuth, metrics, desks, sessions });
+    Object.assign(app.locals, { config, db, indexnow, valkey, keys, outbox, events, stream, tickets, dispatch, apiAuth, metrics, desks, sessions, broker });
     return app;
 }
 

@@ -38,7 +38,7 @@ async function main() {
     const accountData = accountDataLib.create({ db, log: console });
     const accountSend = config.oauth.clientSecret ? createNetworkSender({ networkInternalUrl: config.network.internalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret }) : null;
     const app = createApp({ config, db, valkey, registry, accountData, accountSend });
-    const { keys, outbox, stream, tickets, dispatch, indexnow, sessions } = app.locals;
+    const { keys, outbox, stream, tickets, dispatch, indexnow, sessions, broker } = app.locals;
     keys.start();
     const ticketKey = tickets.start();
 
@@ -50,6 +50,7 @@ async function main() {
         dispatch.start();
         // Run sessions (server/sessions/): place, watch and meter the open ones. Off without the Bot token.
         sessions.start();
+        broker.start();
     }
 
     let accountSubscription = null;
@@ -88,6 +89,7 @@ async function main() {
             () => keys.stop(),
             () => tickets.stop(),
             () => dispatch.stop(),
+            () => broker.stop(),
             () => sessions.stop(),
             () => stream.close(),
             () => outbox.stop(),

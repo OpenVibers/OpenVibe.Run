@@ -53,7 +53,7 @@ function createDispatcher({ config = null, db = null, store = null, events = nul
     const learned = outcomes || (db ? createOutcomes({ db, now, log }) : null);
     const benchPriors = priors || createPriors({ config, fetchImpl, now, log, ttlMs: config && config.bench ? config.bench.priorsTtlMs : undefined });
     // Provider offers are placement candidates only while the adapter can be called.
-    const placer = placement || createPlacement({ config, fetchImpl, now, log, providers: adapter.enabled ? { [BROWSER_PROVIDER]: ['browser'] } : {}, outcomes: learned, priors: benchPriors });
+    const placer = placement || createPlacement({ config, db, fetchImpl, now, log, providers: adapter.enabled ? { [BROWSER_PROVIDER]: ['browser'] } : {}, outcomes: learned, priors: benchPriors });
     const poller = createPoller({ config, db, store, events, stream, bot: botClient, provider: adapter, usageRelay: relay, placement: placer, outcomes: learned, now, log });
     const enabled = Boolean(botClient.enabled || adapter.enabled);
     const note = botClient.enabled

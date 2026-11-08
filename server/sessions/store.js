@@ -13,9 +13,9 @@ const crypto = require('crypto');
 const { ids } = require('openvibe-contracts');
 
 const COLUMNS = ['id', 'owner', 'via', 'kind', 'state', 'width', 'height', 'ttl_s', 'idle_s', 'machine_asked', 'requirements', 'idempotency_key',
-    'request_digest', 'machine', 'desk', 'trust', 'offer_id', 'reasons', 'created_at', 'started_at', 'last_used_at', 'ended_at', 'end_reason',
+    'compute_pool', 'compute_strategy', 'compute_decision', 'request_digest', 'machine', 'desk', 'trust', 'offer_id', 'reasons', 'created_at', 'started_at', 'last_used_at', 'ended_at', 'end_reason',
     'end_detail', 'metered_minutes', 'lease_checked_at', 'task_id', 'curtain', 'updated_at'];
-const JSON_COLUMNS = new Set(['requirements', 'reasons']);
+const JSON_COLUMNS = new Set(['requirements', 'reasons', 'compute_decision']);
 
 const iso = (ms) => (ms == null ? null : new Date(Number(ms)).toISOString());
 const json = (v, dflt) => { if (v == null) return dflt; if (typeof v === 'object') return v; try { return JSON.parse(v); } catch { return dflt; } };
