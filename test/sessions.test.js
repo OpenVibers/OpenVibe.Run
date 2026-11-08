@@ -78,6 +78,17 @@ function fakeDesks() {
         assert.ok(started.some((p) => p.id === ses.id && p.state === 'running'), 'run.session.started');
     });
 
+    await check('browser and throwaway presets are accepted; kept profiles and snapshots say plainly when unavailable', async () => {
+        const unavailable = await t.call('POST', '/api/v1/sessions?template=kept-browser', { ...as(bea), body: { kind: 'browser' } });
+        assert.strictEqual(unavailable.status, 501);
+        assert.match(unavailable.json.detail, /not available on this machine/);
+        const throwaway = await t.call('POST', '/api/v1/sessions?template=throwaway', { ...as(bea), body: { kind: 'browser' } });
+        assert.strictEqual(throwaway.status, 201, throwaway.text);
+        await sessions.finish(await sessions.get(throwaway.json.id), 'ended', 'test complete');
+        const snapshot = await t.call('GET', `/api/v1/sessions/${ses.id}/snapshot`, as(ada));
+        assert.deepStrictEqual(snapshot.json, { available: false, message: 'Snapshots are not available on this machine.' });
+    });
+
     await check('commands reach its desk; anyone else\'s call is 404', async () => {
         const r = await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...as(ada), body: { id: 'c1', kind: 'browser', value: { action: 'open', url: 'https://example.org/' } } });
         assert.strictEqual(r.status, 200, r.text);
@@ -94,6 +105,40 @@ function fakeDesks() {
         valid(list, 'run.session-list-result@1');
         assert.deepStrictEqual(list.sessions.map((s) => s.id), [ses.id]);
         assert.deepStrictEqual((await t.call('GET', '/api/v1/sessions', as(bea))).json.sessions, []);
+        const timeline = await t.call('GET', `/api/v1/sessions/${ses.id}/timeline`, as(ada));
+        assert.strictEqual(timeline.status, 200, timeline.text);
+        assert.strictEqual(timeline.json.actions[0].command_id, 'c1');
+        assert.strictEqual(timeline.json.actions[0].action, 'open');
+        assert.ok(!JSON.stringify(timeline.json).includes('https://example.org'), 'timeline omits command values and URLs');
+        assert.strictEqual((await t.call('GET', `/api/v1/sessions/${ses.id}/timeline`, as(bea))).status, 404);
+    });
+
+    await check('the B3 control lease hands off to an agent, refuses the former holder, and owner take-back wins', async () => {
+        const getLease = async () => (await t.call('GET', `/api/v1/sessions/${ses.id}/control`, as(ada))).json.lease;
+        let lease = getLease ? await getLease() : null;
+        valid(lease, 'common.control-lease@1');
+        assert.deepStrictEqual(lease.holder, { kind: 'person', subject: ada });
+        const agent = { token: t.network.signService({ sub: 'svc:actor', cap: ['run.session.control'] }), headers: { 'X-OV-Subject': ada } };
+        assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...agent, body: { kind: 'screen', value: {} } })).status, 403, 'an agent without the lease cannot control the desk');
+        const grant = await t.call('POST', `/api/v1/sessions/${ses.id}/control/grant`, { ...as(ada), body: { holder: { kind: 'ai', subject: 'svc:actor' } } });
+        valid(grant.json.lease, 'common.control-lease@1');
+        const held = await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...agent, body: { kind: 'screen', value: {} } });
+        assert.strictEqual(held.status, 200, held.text);
+        assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...as(ada), body: { kind: 'screen', value: {} } })).status, 403, 'owner must take back before sending input');
+        lease = (await t.call('POST', `/api/v1/sessions/${ses.id}/control/take`, as(ada))).json.lease;
+        assert.deepStrictEqual(lease.holder, { kind: 'person', subject: ada });
+        assert.ok(lease.seq > grant.json.lease.seq);
+        const guest = ids.newId('user');
+        await t.call('POST', `/api/v1/sessions/${ses.id}/control/grant`, { ...as(ada), body: { holder: { kind: 'person', subject: guest } } });
+        const guestCall = await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...as(guest), body: { kind: 'screen', value: {} } });
+        assert.strictEqual(guestCall.status, 200, guestCall.text);
+        assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...as(ada), body: { kind: 'screen', value: {} } })).status, 403);
+        lease = (await t.call('POST', `/api/v1/sessions/${ses.id}/control/take`, as(ada))).json.lease;
+        t.clock.offset += 61_000;
+        lease = (await t.call('GET', `/api/v1/sessions/${ses.id}/control`, as(ada))).json.lease;
+        assert.deepStrictEqual(lease.holder, { kind: 'nobody', subject: null }, 'a quiet holder expires lazily');
+        const events = (await t.outboxRows('run.session.control_lease_changed')).map((e) => e.payload || e);
+        assert.ok(events.some((e) => e.lease && e.lease.seq === lease.seq), 'lease transitions are durable events');
     });
 
     await check('a first-party service opens one for a person, with the capability; an app never does', async () => {
