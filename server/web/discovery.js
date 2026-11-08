@@ -26,7 +26,7 @@ function sections(base) {
             { title: 'Privacy', url: `${base}/privacy`, html: true },
             { title: 'DMCA', url: `${base}/dmca`, html: true },
             { title: 'OpenVibe.Run on GitHub', url: REPO, note: 'the source and the README: the job API, its states and its capabilities' },
-            { title: 'OpenVibe Node', url: NODE_REPO, note: 'pair your own machine to run jobs' },
+            { title: 'OpenVibe Link', url: NODE_REPO, note: 'pair your own machine to run jobs' },
         ],
     };
 }

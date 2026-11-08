@@ -51,7 +51,7 @@ const FAQ_CSS = '<style>.run-faq{border:1px solid var(--border,#1f2d47);border-r
 const code = (s) => `<code>${s.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</code>`;
 
 // The samples run as written: the first declares the artifact the other two submit, on the person's own paired machine
-// (the OpenVibe Node runs only what its owner declared: OpenVibe.Node docs/worker.md).
+// (the OpenVibe Link runs only what its owner declared: the Link repo's docs/worker.md).
 const MACHINE_EXAMPLE = `# On your paired machine (installed with --worker): a function is a command you declare.
 # Its args arrive as one line of JSON on stdin, its stdout streams back, and fd 3 is its result.
 sudo mkdir -p /opt/fn/hello && sudo tee /opt/fn/hello/run > /dev/null <<'EOF'
@@ -177,7 +177,7 @@ function body() {
         lede: 'Pair a computer once and the jobs you start run there, on your hardware, with their output streamed back to you. '
             + 'Or send a job to one API with your project\'s token: Run picks a node that offers the runtime it asks for and meters it per second.',
         actions: [{ label: 'Pair your machine', href: 'https://openvibe.bot/machines', primary: true }, { label: 'Try it from OpenVibe.Codes', href: 'https://openvibe.codes/run' }, { label: 'The API', href: '#api' }],
-        note: 'Alpha. A job runs on nodes paired with OpenVibe (the OpenVibe Node); with none online for its class it waits, then expires.',
+        note: 'Alpha. A job runs on nodes paired with OpenVibe (the OpenVibe Link); with none online for its class it waits, then expires.',
     }) + showcase.steps({
         id: 'machine',
         title: 'Your machine, your jobs',
@@ -202,7 +202,7 @@ function body() {
         lede: 'A job names the class of machine it needs. What each one is today:',
         columns: ['What runs', 'Today'],
         rows: [
-            { label: 'function', values: ['A registered artifact on a paired OpenVibe Node', 'Works'] },
+            { label: 'function', values: ['A registered artifact on a paired OpenVibe Link', 'Works'] },
             { label: 'code', values: ['An OpenVibe.Codes task on your own machine', 'Works'] },
             { label: 'browser', values: ['A page in a managed browser', 'Built, not switched on yet'] },
             { label: 'linux, desktop, gpu', values: ['Reserved names for the machines they say', 'Not yet'] },
@@ -234,8 +234,8 @@ function body() {
     }) + (FAQ.length ? `<section class="sc-sec" id="questions" aria-labelledby="run-faq-h"><h2 id="run-faq-h">Questions</h2>${FAQ.map((f) => `<details class="run-faq"><summary>${esc(f.q)}</summary><p>${esc(f.a)}</p></details>`).join('')}</section>` : '')
     + showcase.cta({
         title: 'Open source',
-        text: 'Run is AGPL-3.0, and so is the OpenVibe Node that turns a computer into a worker.',
-        actions: [{ label: 'OpenVibers/OpenVibe.Run', href: 'https://github.com/OpenVibers/OpenVibe.Run' }, { label: 'The OpenVibe Node', href: 'https://github.com/OpenVibers/OpenVibe.Node' }],
+        text: 'Run is AGPL-3.0, and so is the OpenVibe Link that turns a computer into a worker.',
+        actions: [{ label: 'OpenVibers/OpenVibe.Run', href: 'https://github.com/OpenVibers/OpenVibe.Run' }, { label: 'The OpenVibe Link', href: 'https://github.com/OpenVibers/OpenVibe.Node' }],
     });
 }
 

@@ -23,7 +23,7 @@ const DEVICE = 'dev_01J8Z4M2Q0R7T9YV3K6N8P1W2X';   // the device Bot dispatches 
 const OTHER_DEVICE = 'dev_01J8Z4M2Q0R7T9YV3K6N8P1W2XQ';
 const PROJECT = () => ids.newId('project');
 
-/** A contract-valid platform.resource-offer@1 for a paired Node advertising worker:<class>. */
+/** A contract-valid platform.resource-offer@1 for a paired Link advertising worker:<class>. */
 function offer(over = {}) {
     return {
         offer_id: 'off_node_01',

@@ -7,7 +7,7 @@
  * Run is the job service of the network (plan T14, ADR-034): it owns the API, the project scope and the
  * placement, on its own PostgreSQL (ADR-035). Bot owns the node link and the per-second metering of the jobs it
  * carries (plan T14 L1). The one exception is an external managed-browser provider (plan T14 R4a): it is not a
- * paired Node and writes no usage of its own, so Run meters those jobs itself and posts their readings with a
+ * paired Link and writes no usage of its own, so Run meters those jobs itself and posts their readings with a
  * Billing token of its own (billing.usage.record, audience openvibe.billing), used for nothing else. The
  * provider's API key lives in Run's environment only: never in an offer, a job or a log.
  */

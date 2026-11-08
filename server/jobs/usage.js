@@ -2,7 +2,7 @@
 
 /**
  * Run's own metering (plan T14 R4a, decision B): the usage of a job an external managed-browser provider ran.
- * Bot meters every job it carries and Run never posts those; a provider is not a paired Node and writes no usage,
+ * Bot meters every job it carries and Run never posts those; a provider is not a paired Link and writes no usage,
  * so for its jobs — and only for them — Run queues the readings and posts them to OpenVibe.Billing's
  * billing.usage.record (POST <RUN_BILLING_URL>/api/v1/usage, one reading per request), the pattern of OpenVibe.Bot's
  * server/jobs/metering.js.
