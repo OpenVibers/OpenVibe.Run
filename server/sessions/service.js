@@ -285,7 +285,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         if (typeof envelope !== 'string' || envelope.length < 12 || envelope.length > 16_384 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(envelope)) throw new SessionError(413, 'run.fill.envelope', 'the base64 encrypted envelope must be at most 16 KB');
         const claimed = await db.maybe("UPDATE run_session_fill_requests SET state = 'running', decision = 'approved' WHERE id = $1 AND state = 'pending' AND expires_at > $2 RETURNING id", [id, now()]);
         if (!claimed) throw new SessionError(409, 'run.fill.used', 'the approval was already used');
-        const result = await desks.act(row.machine, row.desk, bare(row.owner), { id: `fill-${id}`, kind: 'browser', value: { action: 'blind_fill', request_id: id, origin: request.origin, envelope } }).catch(() => null);
+        const result = await desks.act(row.machine, row.desk, bare(row.owner), { id: `fill-${id}`, kind: 'browser', value: { action: 'blind_fill', request_id: id, envelope } }).catch(() => null);
         const outcome = result && result.result === 'ack' && result.data && result.data.outcome === 'ok' ? 'ok' : 'failed';
         await db.maybe("UPDATE run_session_fill_requests SET state = $1, outcome = $1, finished_at = $2 WHERE id = $3 AND state = 'running'", [outcome, now(), id]);
         setTimeout(async () => {
@@ -310,7 +310,8 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
     async function getFillRequest(id, sessionId, owner) {
         const r = await db.maybe('SELECT f.id, f.origin, f.state, f.outcome, f.created_at, f.expires_at FROM run_session_fill_requests f JOIN run_sessions s ON s.id=f.session_id WHERE f.id=$1 AND f.session_id=$2 AND s.owner=$3', [id, sessionId, owner]);
         if (!r) throw new SessionError(404, 'run.fill.not_found', 'no such fill request');
-        return { request_id:r.id, origin:r.origin, state:r.state, outcome:r.outcome || null, created_at:new Date(Number(r.created_at)).toISOString(), expires_at:new Date(Number(r.expires_at)).toISOString(), reason:r.outcome === 'failed' ? 'refused' : null };
+        const reason = r.state === 'expired' ? 'expired' : r.outcome === 'failed' ? 'refused' : null;
+        return { request_id:r.id, origin:r.origin, state:r.state, outcome:r.outcome || null, created_at:new Date(Number(r.created_at)).toISOString(), expires_at:new Date(Number(r.expires_at)).toISOString(), reason };
     }
     async function listFillRequests(owner) {
         const rows = await db.many("SELECT f.id, f.session_id, f.machine_node_id, f.origin, f.created_at, f.expires_at, f.agent_subject FROM run_session_fill_requests f JOIN run_sessions s ON s.id = f.session_id WHERE s.owner = $1 AND f.state = 'pending' AND f.expires_at > $2 ORDER BY f.created_at", [owner, now()]);

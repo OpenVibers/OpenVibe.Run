@@ -151,6 +151,8 @@ function fakeDesks() {
         assert.strictEqual(oversized.json.code, 'run.fill.envelope');
         const grantFill = await t.call('POST', `/api/v1/fill-requests/${pending.json.request_id}/grant`, { ...dock, body: { request_id: pending.json.request_id, envelope: 'T1ZMSwAAAAAAAAA=' } });
         assert.strictEqual(grantFill.json.outcome, 'ok', grantFill.text);
+        const machineFill = desks.calls.find((c) => c[4] && c[4].value && c[4].value.action === 'blind_fill')[4].value;
+        assert.deepStrictEqual(Object.keys(machineFill).sort(), ['action', 'envelope', 'request_id']);
         assert.ok(!/username|password|secret|code/i.test(JSON.stringify([pending.json, requests.json, grantFill.json])), 'no response contains credential contents');
         assert.strictEqual((await t.call('GET', `/api/v1/sessions/${ses.id}/still`, as(ada))).status, 423, 'captures remain withheld after completion until resume');
         assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...agent, body: { kind: 'browser', value: { action: 'read' } } })).status, 423, 'page text stays withheld until resume');
