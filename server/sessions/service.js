@@ -247,8 +247,9 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         return out;
     }
 
+    const EXACT_HTTPS_ORIGIN = /^https:\/\/[a-z0-9.-]+(:[0-9]{1,5})?$/;
     const exactOrigin = (value) => {
-        try { const u = new URL(String(value)); if (u.protocol !== 'https:' || u.origin !== value) return null; return u.origin; }
+        try { if (typeof value !== 'string' || !EXACT_HTTPS_ORIGIN.test(value)) return null; const u = new URL(value); if (u.protocol !== 'https:' || u.origin !== value) return null; return u.origin; }
         catch { return null; }
     };
     async function createFillRequest(row, requestedOrigin, actor) {
