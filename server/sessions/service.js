@@ -180,6 +180,8 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
             contracts.assertValid('events.event-envelope@1', prepared);
             await t.maybe(`INSERT INTO ${EVENTS_TABLE} (event_id, envelope, created_at) VALUES ($1, $2, $3) ON CONFLICT (event_id) DO NOTHING RETURNING id`,
                 [`run:${row.id}:control-lease:${lease.seq}`, JSON.stringify(prepared), now()]);
+            await t.maybe(`INSERT INTO run_session_actions (session_id,command_id,kind,action,actor_kind,actor_subject,result,created_at)
+                VALUES ($1,$2,'control',$3,$4,$5,'ack',$6) RETURNING id`, [row.id,`control:${lease.seq}`,reason,lease.holder.kind,lease.holder.subject || '',now()]);
             return saved;
         });
     }

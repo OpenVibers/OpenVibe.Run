@@ -23,6 +23,11 @@ const { boot, check, done } = require('./helpers/app');
         await check('encrypted Actor profile survives a session and service restart; sign-out is site-specific', async () => {
             const start = async () => { const r = await sessions.create(owner, 'service:actor', { kind: 'browser' }, { template: 'kept-browser', actor }); await sessions.tick(); return sessions.get(r.row.id); };
             const one = await start(); assert.equal(one.state, 'running');
+            await sessions.grantControl(one,{kind:'ai',subject:'svc_actor'});
+            await sessions.takeControl(await sessions.get(one.id));
+            const history=await sessions.timeline(one);
+            assert.equal(history.actions[0].action,'owner_take_back');
+            assert.equal(history.actions[0].actor.kind,'person');
             await assert.rejects(() => sessions.create(owner, 'service:actor', { kind: 'browser' }, { template: 'kept-browser', actor }), e => e.status === 409);
             browsers.set(one.desk, { cookies: [{ name: 'login', value: 'synthetic-signin-a', domain: '.a.example', path: '/' }, { name: 'login', value: 'synthetic-signin-b', domain: 'b.example', path: '/' }], origins: [{ origin: 'https://a.example', entries: [['theme', 'dark']] }] });
             await sessions.finish(one, 'ended');
