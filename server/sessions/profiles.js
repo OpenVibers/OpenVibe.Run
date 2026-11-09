@@ -38,8 +38,11 @@ function createProfiles({ config, db, now = Date.now, log = console }) {
     }
     async function forget(owner, actor, site) {
         const p = await read(owner, actor);
-        p.cookies = p.cookies.filter(c => String(c.domain || '').replace(/^\./, '').toLowerCase() !== site);
-        p.origins = p.origins.filter(o => new URL(o.origin).hostname !== site);
+        // Signing out of a site signs out of its subdomains too (accounts.google.com when the person signs out of
+        // google.com): a cookie or a storage origin on the site or under it goes.
+        const under = (host) => { const h = String(host || '').replace(/^\./, '').toLowerCase(); return h === site || h.endsWith(`.${site}`); };
+        p.cookies = p.cookies.filter(c => !under(c.domain));
+        p.origins = p.origins.filter(o => { try { return !under(new URL(o.origin).hostname); } catch { return true; } });
         await write(owner, actor, p);
     }
     async function lock(owner, actor, fn) {
