@@ -14,7 +14,7 @@ const { ids } = require('openvibe-contracts');
 
 const COLUMNS = ['id', 'owner', 'via', 'kind', 'state', 'width', 'height', 'ttl_s', 'idle_s', 'machine_asked', 'requirements', 'idempotency_key',
     'compute_pool', 'compute_strategy', 'compute_decision', 'request_digest', 'machine', 'desk', 'trust', 'offer_id', 'reasons', 'created_at', 'started_at', 'last_used_at', 'ended_at', 'end_reason',
-    'end_detail', 'metered_minutes', 'lease_checked_at', 'task_id', 'curtain', 'control_lease', 'template', 'updated_at'];
+    'end_detail', 'metered_minutes', 'lease_checked_at', 'task_id', 'curtain', 'control_lease', 'template', 'egress_label', 'updated_at'];
 const JSON_COLUMNS = new Set(['requirements', 'reasons', 'compute_decision', 'control_lease']);
 
 const iso = (ms) => (ms == null ? null : new Date(Number(ms)).toISOString());
@@ -54,7 +54,7 @@ function present(row, now = Date.now()) {
         idle_s: Number(row.idle_s),
         placement: placed ? {
             machine: row.machine, desk: row.desk, trust: row.trust, offer_id: row.offer_id || null, region: null,
-            reasons: json(row.reasons, []).slice(0, 8).map((r) => String(r).slice(0, 200)),
+            reasons: [row.egress_label || require('./link-egress').goingOutThrough(row.id), ...json(row.reasons, [])].filter(Boolean).slice(0, 8).map((r) => String(r).slice(0, 200)),
         } : null,
         timings: { created_at: iso(row.created_at), started_at: iso(row.started_at), last_used_at: iso(row.last_used_at), ended_at: iso(row.ended_at) },
         end: row.state === 'ended' ? { reason: row.end_reason || 'ended', detail: row.end_detail ? String(row.end_detail).slice(0, 500) : null } : null,
@@ -109,10 +109,13 @@ const open = async (db, limit = 200) => (await db.many("SELECT * FROM run_sessio
 const openCount = async (db, owner) => Number((await db.one("SELECT count(*)::int AS n FROM run_sessions WHERE owner = $1 AND state <> 'ended'", [owner])).n);
 
 async function update(t, id, fields) {
+    const label = require('./link-egress').goingOutThrough(id);
+    if (label) fields = { ...fields, egress_label: label };
     const cols = Object.keys(fields).filter((k) => COLUMNS.includes(k) && k !== 'id');
     if (!cols.length) return get(t, id);
     const vals = cols.map((c) => (JSON_COLUMNS.has(c) && fields[c] != null ? JSON.stringify(fields[c]) : fields[c]));
     const row = await t.maybe(`UPDATE run_sessions SET ${cols.map((c, i) => `${c} = $${i + 2}`).join(', ')} WHERE id = $1 RETURNING *`, [id, ...vals]);
+    if (row?.state === 'ended') void require('./link-egress').revokeKnownSession(id).catch(() => {});
     return fromDb(row);
 }
 

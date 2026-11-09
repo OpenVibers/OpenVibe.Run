@@ -1,0 +1,31 @@
+'use strict';
+const assert = require('assert/strict');
+const { createLinkEgress, goingOutThrough } = require('../server/sessions/link-egress');
+(async () => {
+    const requests = [];
+    let mode = 'link', available = true;
+    const config = { network: { internalUrl: 'https://network.test' }, oauth: { clientId: 'run', clientSecret: 'test-only' } };
+    const client = createLinkEgress({ config, fetchImpl: async (url, options) => {
+        if (url.endsWith('/oauth/token')) return new Response(JSON.stringify({ access_token: 'test-service', token_type: 'Bearer', expires_in: 3600 }), { status: 200 });
+        requests.push({ url, options });
+        if (!available) return new Response('', { status: 503 });
+        return options.method === 'PUT' ? new Response(JSON.stringify({ mode, device_name: 'Home PC' }), { status: 200 }) : new Response(null, { status: 204 });
+    } });
+    const body = { session: 'ses_test', desk: 'desk-test' };
+    await client.prepare('dev_cloud', 'usr_owner', body);
+    assert.equal(goingOutThrough(body.session), 'Going out through: Home PC');
+    const sent = JSON.parse(requests[0].options.body);
+    assert.equal(sent.owner, 'usr_owner');
+    assert.equal(sent.machine, 'dev_cloud');
+    assert.equal(sent.credential.length, 43);
+    assert.ok(!goingOutThrough(body.session).includes(sent.credential));
+    mode = 'direct'; await client.prepare('dev_cloud', 'usr_owner', body);
+    assert.equal(goingOutThrough(body.session), "Going out through: OpenVibe's address");
+    mode = 'wait'; await assert.rejects(client.prepare('dev_cloud', 'usr_owner', body), { code: 'run.egress.waiting' });
+    available = false; await assert.rejects(client.prepare('dev_cloud', 'usr_owner', body), { code: 'run.egress.unavailable' });
+    available = true; await client.renew(body.session); await client.end(body.session);
+    assert.equal(goingOutThrough(body.session), null);
+    assert.ok(requests.some(r => r.url.endsWith('/ses_test/renew')));
+    assert.equal(requests.at(-1).options.method, 'DELETE');
+    console.log('Link egress: proxy decision, both offline choices, failed authorization, renewal and end passed');
+})().catch(e => { console.error(e); process.exitCode = 1; });
