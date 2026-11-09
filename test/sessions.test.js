@@ -158,6 +158,15 @@ function fakeDesks() {
         assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...agent, body: { kind: 'browser', value: { action: 'read' } } })).status, 423, 'page text stays withheld until resume');
         assert.strictEqual((await t.call('POST', `/api/v1/fill-requests/${pending.json.request_id}/grant`, { ...dock, body: { request_id: pending.json.request_id, envelope: 'T1ZMSwAAAAAAAAA=' } })).status, 404, 'a request cannot be reused');
         await new Promise((resolve) => setTimeout(resolve, 5100));
+        const expiring = await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://example.org' } });
+        assert.strictEqual(expiring.status, 201, expiring.text);
+        await t.db.maybe('UPDATE run_session_fill_requests SET expires_at = $1 WHERE id = $2 RETURNING id', [Date.now() + t.clock.offset - 1, expiring.json.request_id]);
+        const expiredCooldown = await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://example.org' } });
+        assert.deepStrictEqual([expiredCooldown.status, expiredCooldown.json.code], [429, 'run.fill.cooldown']);
+        await new Promise((resolve) => setTimeout(resolve, 5100));
+        await t.call('POST', `/api/v1/sessions/${ses.id}/control/take`, as(ada));
+        t.clock.offset += 60_001;
+        await t.call('POST', `/api/v1/sessions/${ses.id}/control/grant`, { ...as(ada), body: { holder: { kind: 'ai', subject: 'svc:actor' } } });
         const declinedRequest = await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://example.org' } });
         assert.strictEqual(declinedRequest.status, 201, declinedRequest.text);
         const declined = await t.call('POST', `/api/v1/fill-requests/${declinedRequest.json.request_id}/decline`, dock);
