@@ -8,7 +8,7 @@ const home = require('./home');
 
 const MAX_BYTES = 512 * 1024;
 const REPO = 'https://github.com/OpenVibers/OpenVibe.Run';
-const NODE_REPO = 'https://github.com/OpenVibers/OpenVibe.Node';
+const NODE_REPO = 'https://github.com/OpenVibers/OpenVibe.Link';
 
 // The public pages, in the order the sitemap lists them.
 const PAGES = ['/', '/updates', '/terms', '/privacy', '/dmca'];

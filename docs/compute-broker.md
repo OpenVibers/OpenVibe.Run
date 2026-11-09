@@ -83,14 +83,14 @@ the pool and RAM inventory. The image's enrollment mechanism is an operator prer
 
 For workers without this naming integration, put the machine id in trusted inventory and bind it
 with `POST /api/v1/compute/rentals/:id/bind`, JSON `{ "machine": "dev_…" }`, as the operator with
-an Origin matching Run. Automatic secure enrollment itself is not implemented here; do not bake reusable Node credentials into an image. Unbound rentals
+an Origin matching Run. Automatic secure enrollment itself is not implemented here; do not bake reusable Link credentials into an image. Unbound rentals
 count as starting capacity and are deleted at their deadline; never regarded as usable desktops.
 
 Ordinary scale-down marks a host draining, excludes it from placement, waits for zero sessions,
 then requests deletion. At the runtime/budget limit, Run ends sessions before release. Unknown
 host observations never count as zero occupancy. Each rental's stop deadline survives restart.
 Desktop sizing is available, but the current released Bot session API creates browser desks only;
-full Linux desktop execution still needs the Computer/Node runtime work and security review.
+full Linux desktop execution still needs the Computer/Link runtime work and security review.
 
 Checks: `npm test -- compute sessions dispatch`; the full suite is `OV_ALLOW_SUITE=1 npm test`.
 The SDK dependency is pinned to the reviewed job commit until its PR is merged and released;

@@ -61,7 +61,7 @@ echo "hello from job $OPENVIBE_JOB_ID: $args"
 printf '{"ok":true}' >&3
 EOF
 sudo chmod 755 /opt/fn/hello/run
-# Add it to "worker" → "functions" in /etc/openvibe-node/config.json, then: sudo systemctl restart openvibe-node
+# Add it to "worker" → "functions" in /etc/openvibe-link/config.json, then: sudo systemctl restart openvibe-link
 #   {"name": "hello", "version": "1.0.0", "command": ["/opt/fn/hello/run"]}`;
 
 const SUBMIT_EXAMPLE = `curl -X POST https://openvibe.run/api/v1/jobs \\
@@ -159,7 +159,7 @@ function body() {
             label: 'How a job runs',
             center: { title: 'Your node', sub: 'runs the job' },
             inner: [
-                { icon: 'ov:plug', label: 'Pair', href: 'https://openvibe.bot/machines' },
+                { icon: 'ov:plug', label: 'Pair', href: 'https://openvibe.link/machines' },
                 { icon: 'ov:code', label: 'Submit', href: '#api' },
                 { icon: 'ov:shield', label: 'Sandbox', href: '#how' },
                 { icon: 'ov:history', label: 'Stream', href: '#how' },
@@ -176,14 +176,14 @@ function body() {
         accent: 'or on a node that can.',
         lede: 'Pair a computer once and the jobs you start run there, on your hardware, with their output streamed back to you. '
             + 'Or send a job to one API with your project\'s token: Run picks a node that offers the runtime it asks for and meters it per second.',
-        actions: [{ label: 'Pair your machine', href: 'https://openvibe.bot/machines', primary: true }, { label: 'Try it from OpenVibe.Codes', href: 'https://openvibe.codes/run' }, { label: 'The API', href: '#api' }],
+        actions: [{ label: 'Pair your machine', href: 'https://openvibe.link/machines', primary: true }, { label: 'Try it from OpenVibe.Codes', href: 'https://openvibe.codes/run' }, { label: 'The API', href: '#api' }],
         note: 'Alpha. A job runs on nodes paired with OpenVibe (the OpenVibe Link); with none online for its class it waits, then expires.',
     }) + showcase.steps({
         id: 'machine',
         title: 'Your machine, your jobs',
         lede: 'A computer you pair runs only the jobs you start: placement matches its owner before anything else.',
         items: [
-            { title: 'Pair it', href: 'https://openvibe.bot/machines', text: 'On openvibe.bot/machines, copy the one-line install command and run it on the computer. It joins as a worker under your account.' },
+            { title: 'Pair it', href: 'https://openvibe.link/machines', text: 'On openvibe.link/machines, copy the one-line install command and run it on the computer. It joins as a worker under your account.' },
             { title: 'Start a job', href: 'https://openvibe.codes/run', text: 'OpenVibe.Codes\' "Run on your machine" sends a coding task there, or your own code submits one through the API.' },
             { title: 'Watch it run', text: 'The job\'s event stream shows each state change and the machine\'s output as it is written.' },
             { title: 'Keep the record', text: 'Every job ends succeeded, failed, cancelled or expired, with its timings, its exit and the seconds it ran.' },
@@ -235,7 +235,7 @@ function body() {
     + showcase.cta({
         title: 'Open source',
         text: 'Run is AGPL-3.0, and so is the OpenVibe Link that turns a computer into a worker.',
-        actions: [{ label: 'OpenVibers/OpenVibe.Run', href: 'https://github.com/OpenVibers/OpenVibe.Run' }, { label: 'The OpenVibe Link', href: 'https://github.com/OpenVibers/OpenVibe.Node' }],
+        actions: [{ label: 'OpenVibers/OpenVibe.Run', href: 'https://github.com/OpenVibers/OpenVibe.Run' }, { label: 'The OpenVibe Link', href: 'https://github.com/OpenVibers/OpenVibe.Link' }],
     });
 }
 
