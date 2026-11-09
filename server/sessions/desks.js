@@ -37,6 +37,9 @@ function createDeskClient({ config, fetchImpl = globalThis.fetch, now = () => Da
         ? createServiceTokenClient({ tokenUrl: `${config.network.internalUrl}/oauth/token`, clientId, clientSecret, audience: botAudience, scope: SCOPE, fetch: fetchImpl, now })
         : null;
     const enabled = Boolean(tokens && botUrl);
+    const egress = require('./link-egress').createLinkEgress({ config, fetchImpl, now });
+    const cloud = new Set();
+    const assigned = new Map();
     const note = enabled ? `sessions lease desks on Bot: ${botUrl}, capability ${SCOPE}` : 'sessions are off: OV_OAUTH_CLIENT_SECRET is unset, so Run cannot mint its Bot token';
 
     async function call(method, path, subject, body) {
@@ -65,11 +68,43 @@ function createDeskClient({ config, fetchImpl = globalThis.fetch, now = () => Da
     return {
         enabled,
         note,
-        async hosts(subject) { const out = await call('GET', '/api/v1/desk-hosts', subject); return out && Array.isArray(out.hosts) ? out.hosts : []; },
-        lease: (machine, subject, body) => call('POST', `/api/v1/machines/${m(machine)}/desk-leases`, subject, body),
-        get: (machine, desk, subject) => call('GET', `/api/v1/machines/${m(machine)}/desk-leases/${m(desk)}`, subject),
+        async hosts(subject) {
+            const out = await call('GET', '/api/v1/desk-hosts', subject);
+            const hosts = out && Array.isArray(out.hosts) ? out.hosts : [];
+            for (const h of hosts) { if (h.shared || h.trust !== 'user-owned') cloud.add(h.machine_id); }
+            return hosts;
+        },
+        async lease(machine, subject, body) {
+            // Only canonical Run sessions enter the per-session Link path. Bot remains the validator for other lease requests.
+            if (cloud.has(machine) && /^ses_[0-9A-HJKMNP-TV-Z]{26}$/.test(body.session || '')) {
+                await egress.prepare(machine, subject, body);
+                assigned.set(`${machine}:${body.desk}`, body.session);
+            }
+            try { return await call('POST', `/api/v1/machines/${m(machine)}/desk-leases`, subject, body); }
+            catch (e) { if (assigned.has(`${machine}:${body.desk}`)) await egress.end(body.session).catch(() => {}); throw e; }
+        },
+        async get(machine, desk, subject) {
+            const lease = await call('GET', `/api/v1/machines/${m(machine)}/desk-leases/${m(desk)}`, subject);
+            if (lease && (lease.shared || cloud.has(machine) || assigned.has(`${machine}:${desk}`))) {
+                assigned.set(`${machine}:${desk}`, lease.session);
+                await egress.renew(lease.session);
+            }
+            return lease;
+        },
         act: (machine, desk, subject, cmd) => call('POST', `/api/v1/machines/${m(machine)}/desk-leases/${m(desk)}/commands`, subject, cmd),
-        end: (machine, desk, subject) => call('DELETE', `/api/v1/machines/${m(machine)}/desk-leases/${m(desk)}`, subject),
+        async end(machine, desk, subject) {
+            const key = `${machine}:${desk}`;
+            let session = assigned.get(key);
+            if (!session) {
+                const lease = await call('GET', `/api/v1/machines/${m(machine)}/desk-leases/${m(desk)}`, subject);
+                if (lease?.shared) session = lease.session;
+            }
+            // Ending the desk must still reach Bot if Network is briefly unavailable. The credential also
+            // expires within two minutes without renewal, and Link rechecks live streams every five seconds.
+            if (session) await egress.end(session).catch(() => {});
+            assigned.delete(key);
+            return call('DELETE', `/api/v1/machines/${m(machine)}/desk-leases/${m(desk)}`, subject);
+        },
         status: () => ({ enabled, note, bot_url: botUrl, capability: SCOPE }),
     };
 }
