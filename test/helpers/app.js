@@ -129,6 +129,9 @@ async function startNetwork() {
         signUser({ subject = ids.newId('user'), username = 'ada', role = 'user' } = {}) {
             return jwt.sign({ sub: String(Date.parse('2026-01-01T00:00:00Z')), subject_id: subject, username, display_name: username, role }, privatePem, { algorithm: 'RS256', issuer, expiresIn: '1h' });
         },
+        signDock({ subject = ids.newId('user'), scope = 'run.fill.approve' } = {}) {
+            return jwt.sign({ sub: String(Date.parse('2026-01-01T00:00:00Z')), subject_id: subject, client_id: 'companion', scope, fam: `fam_${crypto.randomBytes(12).toString('hex')}` }, privatePem, { algorithm: 'RS256', issuer: `${issuer}/dock`, audience: 'openvibe.network', expiresIn: '1h' });
+        },
     };
 }
 

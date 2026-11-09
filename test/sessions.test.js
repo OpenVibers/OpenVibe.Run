@@ -41,6 +41,8 @@ function fakeDesks() {
         async act(machine, desk, subject, cmd) {
             calls.push(['act', machine, desk, subject, cmd]);
             if (!leases.has(`${machine} ${desk}`)) return null;
+            if (cmd.value && cmd.value.action === 'active_origin') return { machine_id: machine, desk, id: cmd.id, result: 'ack', data: { origin: 'https://example.org' } };
+            if (cmd.value && cmd.value.action === 'blind_fill') return { machine_id: machine, desk, id: cmd.id, result: 'ack', data: { outcome: 'ok' } };
             return { machine_id: machine, desk, id: cmd.id, result: 'ack', data: cmd.kind === 'screen' ? { format: 'jpeg', width: 1280, height: 800, content_b64: '/9j/' } : { url: 'https://example.org/', title: 'Example' } };
         },
         async end(machine, desk) { calls.push(['end', machine, desk]); const had = leases.delete(`${machine} ${desk}`); return had ? { ended: true, stopped: true } : null; },
@@ -55,6 +57,7 @@ function fakeDesks() {
     const ada = ids.newId('user');
     const bea = ids.newId('user');
     const as = (subject) => ({ token: t.network.signUser({ subject }) });
+    const asCompanion = (subject) => ({ token: t.network.signDock({ subject }) });
     const valid = (doc, id) => { const v = contracts.validate(id, doc); assert.ok(v.valid, `${id}: ${JSON.stringify(v.errors)}\n${JSON.stringify(doc)}`); };
     const usageOf = async (id) => (await t.db.many('SELECT envelope FROM run_usage_outbox ORDER BY id')).map((r) => (typeof r.envelope === 'string' ? JSON.parse(r.envelope) : r.envelope)).filter((u) => u.id.startsWith(`run:${id}:`));
 
@@ -124,6 +127,53 @@ function fakeDesks() {
         valid(grant.json.lease, 'common.control-lease@1');
         const held = await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...agent, body: { kind: 'screen', value: {} } });
         assert.strictEqual(held.status, 200, held.text);
+        assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://example.org/path' } })).status, 422, 'the requested value must be an exact origin');
+        assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'http://example.org' } })).status, 422, 'plain HTTP is never eligible for credential entry');
+        const dock = asCompanion(ada);
+        for (const [method, route, body] of [
+            ['POST', `/api/v1/sessions/${ses.id}/commands`, { kind: 'screen', value: {} }],
+            ['GET', `/api/v1/sessions/${ses.id}/control`],
+        ]) assert.ok([401, 403].includes((await t.call(method, route, { ...dock, body })).status), `Dock token cannot use ${route}`);
+        assert.ok([401, 403].includes((await t.call('GET', `/api/v1/sessions/${ses.id}/still`, dock)).status), 'Dock token receives no capture access');
+        const mismatch = await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://other.example' } });
+        assert.strictEqual(mismatch.status, 409, 'Run reads and checks the active tab origin itself');
+        const pending = await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://example.org' } });
+        assert.strictEqual(pending.status, 201, pending.text);
+        assert.deepStrictEqual(Object.keys(pending.json).sort(), ['request_id', 'status']);
+        assert.strictEqual(pending.json.status, 'pending');
+        const hiddenWhileFill = await t.call('GET', `/api/v1/sessions/${ses.id}/still`, as(ada));
+        assert.strictEqual(hiddenWhileFill.status, 423, 'screenshots are withheld while a fill is pending');
+        assert.ok([401, 403].includes((await t.call('GET', '/api/v1/fill-requests', as(ada))).status), 'an ordinary user token cannot approve fills');
+        const requests = await t.call('GET', '/api/v1/fill-requests', dock);
+        assert.strictEqual(requests.json && requests.json.requests && requests.json.requests[0] && requests.json.requests[0].origin, 'https://example.org', requests.text);
+        const oversized = await t.call('POST', `/api/v1/fill-requests/${pending.json.request_id}/grant`, { ...dock, body: { request_id: pending.json.request_id, envelope: 'A'.repeat(16_388) } });
+        assert.strictEqual(oversized.status, 413, 'oversized envelopes are rejected before claim');
+        assert.strictEqual(oversized.json.code, 'run.fill.envelope');
+        const grantFill = await t.call('POST', `/api/v1/fill-requests/${pending.json.request_id}/grant`, { ...dock, body: { request_id: pending.json.request_id, envelope: 'T1ZMSwAAAAAAAAA=' } });
+        assert.strictEqual(grantFill.json.outcome, 'ok', grantFill.text);
+        const machineFill = desks.calls.find((c) => c[4] && c[4].value && c[4].value.action === 'blind_fill')[4].value;
+        assert.deepStrictEqual(Object.keys(machineFill).sort(), ['action', 'envelope', 'request_id']);
+        assert.ok(!/username|password|secret|code/i.test(JSON.stringify([pending.json, requests.json, grantFill.json])), 'no response contains credential contents');
+        assert.strictEqual((await t.call('GET', `/api/v1/sessions/${ses.id}/still`, as(ada))).status, 423, 'captures remain withheld after completion until resume');
+        assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...agent, body: { kind: 'browser', value: { action: 'read' } } })).status, 423, 'page text stays withheld until resume');
+        assert.strictEqual((await t.call('POST', `/api/v1/fill-requests/${pending.json.request_id}/grant`, { ...dock, body: { request_id: pending.json.request_id, envelope: 'T1ZMSwAAAAAAAAA=' } })).status, 404, 'a request cannot be reused');
+        await new Promise((resolve) => setTimeout(resolve, 5100));
+        const expiring = await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://example.org' } });
+        assert.strictEqual(expiring.status, 201, expiring.text);
+        await t.db.maybe('UPDATE run_session_fill_requests SET expires_at = $1 WHERE id = $2 RETURNING id', [Date.now() + t.clock.offset - 1, expiring.json.request_id]);
+        const expiredCooldown = await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://example.org' } });
+        assert.deepStrictEqual([expiredCooldown.status, expiredCooldown.json.code], [429, 'run.fill.cooldown']);
+        await new Promise((resolve) => setTimeout(resolve, 5100));
+        await t.call('POST', `/api/v1/sessions/${ses.id}/control/take`, as(ada));
+        t.clock.offset += 60_001;
+        await t.call('POST', `/api/v1/sessions/${ses.id}/control/grant`, { ...as(ada), body: { holder: { kind: 'ai', subject: 'svc:actor' } } });
+        const declinedRequest = await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://example.org' } });
+        assert.strictEqual(declinedRequest.status, 201, declinedRequest.text);
+        const declined = await t.call('POST', `/api/v1/fill-requests/${declinedRequest.json.request_id}/decline`, dock);
+        assert.strictEqual(declined.json.reason, 'refused');
+        await new Promise((resolve) => setTimeout(resolve, 5100));
+        const cooldown = await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://example.org' } });
+        assert.deepStrictEqual([cooldown.status, cooldown.json.code], [429, 'run.fill.cooldown']);
         assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...as(ada), body: { kind: 'screen', value: {} } })).status, 403, 'owner must take back before sending input');
         lease = (await t.call('POST', `/api/v1/sessions/${ses.id}/control/take`, as(ada))).json.lease;
         assert.deepStrictEqual(lease.holder, { kind: 'person', subject: ada });
@@ -176,6 +226,11 @@ function fakeDesks() {
         await sessions.tick();
         const s = (await t.call('GET', `/api/v1/sessions/${r.json.id}`, as(bea))).json;
         assert.deepStrictEqual([s.state, s.placement.machine, s.placement.trust], ['running', SHARED, 'community']);
+        await t.call('POST', `/api/v1/sessions/${s.id}/control/grant`, { ...as(bea), body: { holder: { kind: 'ai', subject: 'svc:actor' } } });
+        const agent = { token: t.network.signService({ sub: 'svc:actor', cap: ['run.session.control'] }), headers: { 'X-OV-Subject': bea } };
+        const communityFill = await t.call('POST', `/api/v1/sessions/${s.id}/fill-requests`, { ...agent, body: { origin: 'https://example.org' } });
+        assert.deepStrictEqual([communityFill.status, communityFill.json.code], [403, 'run.fill.machine_forbidden']);
+        await t.call('POST', `/api/v1/sessions/${s.id}/control/take`, as(bea));
         desks.state.busy.delete(OPENVIBE);
         await t.call('POST', `/api/v1/sessions/${s.id}/end`, as(bea));
         const named = await t.call('POST', '/api/v1/sessions', { ...as(bea), body: { kind: 'browser', machine: 'dev_01J8Z4M2Q0R7T9YV3K6N8P1W2Z' } });

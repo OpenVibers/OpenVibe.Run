@@ -22,7 +22,7 @@ const { http } = require('openvibe-contracts');
 const { isLoopbackDirect } = require('openvibe-shared/metrics');
 const { loadConfig } = require('./config');
 const { openDb } = require('./db');
-const { createKeyProvider, createUserAuth, createProjectMembership } = require('./network');
+const { createKeyProvider, createUserAuth, createFillAuth, createProjectMembership, createFillNotifier } = require('./network');
 const { createRunOutbox } = require('./events/outbox');
 const { createStreamTickets } = require('./jobs/ticket');
 const { createJobStream } = require('./jobs/stream');
@@ -30,7 +30,7 @@ const { createRunEvents } = require('./jobs/events');
 const { createDispatcher } = require('./dispatch');
 const { createApiAuth } = require('./api/auth');
 const { v1Router } = require('./api/v1');
-const { sessionsRouter } = require('./api/sessions');
+const { sessionsRouter, fillApprovalRouter } = require('./api/sessions');
 const { createDeskClient } = require('./sessions/desks');
 const { createSessions } = require('./sessions/service');
 const { inputError } = require('./util');
@@ -50,6 +50,7 @@ function createApp(opts = {}) {
     const now = opts.now || (() => Date.now());
     const keys = opts.keys || createKeyProvider(config, { fetchImpl, log });
     const userAuth = createUserAuth(config, keys);
+    const fillAuth = createFillAuth(config, keys);
     const outbox = opts.outbox || createRunOutbox({ db, config, fetchImpl: opts.eventsFetch, now, log });
     const events = opts.events || createRunEvents({ outbox, now, log, config });
     const stream = opts.stream || createJobStream({ config, now, log });
@@ -59,11 +60,12 @@ function createApp(opts = {}) {
     // Run cannot mint the Bot token — and nothing runs until server/index.js calls its start().
     const dispatch = opts.dispatch || createDispatcher({ config, db, store: require('./jobs/store'), events, stream, log, now, fetchImpl });
     const membership = opts.membership || createProjectMembership(config, { fetchImpl, now });
+    const fillNotifier = opts.fillNotifier || createFillNotifier(config, { fetchImpl, now });
     const apiAuth = createApiAuth({ config, keys, userAuth, membership, log });
     // Run sessions (contracts 0.223.0): browser desks Bot leases per session; the tick starts in server/index.js.
     const desks = opts.desks || createDeskClient({ config, fetchImpl, now });
     const broker = opts.broker || require('./compute/broker').createBroker({ config, db, desks, now, fetchImpl, log });
-    const sessions = opts.sessions || createSessions({ config, db, desks, outbox, now, log, broker });
+    const sessions = opts.sessions || createSessions({ config, db, desks, outbox, now, log, broker, notifyFill: fillNotifier.notify });
     broker.attachSessions(async (id) => { const row = await sessions.get(id); if (row) await sessions.finish(row, 'ttl', 'compute rental budget exhausted'); });
     broker.attachJobs(async (machine) => {
         const jobs = require('./jobs/store');
@@ -128,6 +130,7 @@ function createApp(opts = {}) {
         }),
         express.json({ limit: JSON_LIMIT }),
         (req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); },
+        fillApprovalRouter({ sessions, verifyFillToken: fillAuth.verify }),
         apiAuth.middleware,
         require('./compute/routes').computeRouter({ broker, config }),
         sessionsRouter({ sessions }),
