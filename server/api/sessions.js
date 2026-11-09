@@ -27,7 +27,7 @@ const { capabilities, http, ids } = require('openvibe-contracts');
 const USER_SUBJECT = /^usr_[0-9A-HJKMNP-TV-Z]{26}$/;
 const SESSION_RE = /^ses_[0-9A-HJKMNP-TV-Z]{26}$/;
 
-function sessionsRouter({ sessions }) {
+function sessionsRouter({ sessions, verifyFillToken = async () => null }) {
     const r = express.Router();
     const problem = (res, req, status, code, detail) => http.sendProblem(res, status, code, { detail, ctx: req.ov });
 
@@ -125,6 +125,20 @@ function sessionsRouter({ sessions }) {
         await sessions.saveProfile(row);
         res.json({ saved: true });
     }));
+    r.post('/sessions/:id/fill-requests', wrap(async (req, res) => {
+        const row = await mine(req, res, 'run.session.control', true);
+        if (!row) return;
+        const w = who(req, res, 'run.session.control');
+        if (!w) return;
+        res.status(201).json(await sessions.createFillRequest(row, req.body && req.body.origin, w.actor));
+    }));
+    r.get('/sessions/:id/fill-requests/:requestId', wrap(async (req, res) => {
+        const row = await mine(req, res, 'run.session.control', true);
+        if (!row) return;
+        const w = who(req, res, 'run.session.control');
+        if (!w) return;
+        res.json(await sessions.getFillRequest(req.params.requestId, row.id, w.owner));
+    }));
     r.post('/sessions/:id/control/request', wrap(async (req, res) => {
         const row = await mine(req, res, 'run.session.control', true);
         if (!row) return;
@@ -185,4 +199,35 @@ function sessionsRouter({ sessions }) {
     return r;
 }
 
-module.exports = { sessionsRouter };
+/** Dock auth is deliberately isolated to Companion approval endpoints and runs before general user auth. */
+function fillApprovalRouter({ sessions, verifyFillToken }) {
+    const r = express.Router();
+    const problem = (res, req, status, code, detail) => http.sendProblem(res, status, code, { detail, ctx: req.ov });
+    const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch((err) => {
+        if (err && err.status && err.code) return problem(res, req, err.status, err.code, err.detail || err.message);
+        return next(err);
+    });
+    async function whoFill(req, res) {
+        const token = String(req.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+        const claims = await verifyFillToken(token);
+        if (!claims) { problem(res, req, 401, 'capability.denied', 'Companion sign-in with run.fill.approve is required'); return null; }
+        return { owner: `user:${claims.subject_id}` };
+    }
+    r.get('/fill-requests', wrap(async (req, res) => {
+        const w = await whoFill(req, res); if (!w) return;
+        res.json({ requests: await sessions.listFillRequests(w.owner) });
+    }));
+    r.post('/fill-requests/:id/grant', wrap(async (req, res) => {
+        const w = await whoFill(req, res); if (!w) return;
+        const body = req.body && typeof req.body === 'object' ? req.body : {};
+        if (body.request_id !== req.params.id) return problem(res, req, 422, 'run.fill.request_id', 'request_id must match the route');
+        res.json(await sessions.approveFill(req.params.id, body.envelope, w.owner));
+    }));
+    r.post('/fill-requests/:id/decline', wrap(async (req, res) => {
+        const w = await whoFill(req, res); if (!w) return;
+        res.json(await sessions.decideFill(req.params.id, 'declined', w.owner));
+    }));
+    return r;
+}
+
+module.exports = { sessionsRouter, fillApprovalRouter };

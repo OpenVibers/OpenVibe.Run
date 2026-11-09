@@ -11,9 +11,11 @@
  * createProjectMembership), can act on jobs — every route says so.
  */
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 const { verifyUserToken, createServiceTokenClient } = require('openvibe-sdk/auth');
 
 const MEMBER_READ = 'network.project.member.read';
+const FILL_NOTIFY = 'network.notifications.push';
 const DELEGABLE_ROLES = new Set(['admin', 'owner']);
 const MEMBER_TTL_MS = 60_000;   // the amendment's ceiling: a removed member or an archived project stops new jobs within a minute
 
@@ -66,6 +68,21 @@ function createUserAuth(config, keys) {
     return { verify };
 }
 
+/** Companion Dock tokens are accepted only by fill approval routes, never as general user auth. */
+function createFillAuth(config, keys) {
+    async function verify(token) {
+        if (!token || !keys.get()) return null;
+        try {
+            const claims = jwt.verify(token, keys.get(), { algorithms: ['RS256'], issuer: `${String(config.network.issuer).replace(/\/+$/, '')}/dock`, audience: 'openvibe.network' });
+            if (claims.typ !== undefined || claims.purpose !== undefined || claims.actor_type !== undefined || claims.client_id !== 'companion' || claims.role !== undefined || claims.staff_caps !== undefined
+                || !/^fam_[0-9a-f]{24}$/.test(String(claims.fam || '')) || !String(claims.scope || '').split(/\s+/).includes('run.fill.approve')
+                || !require('openvibe-contracts').ids.isSubjectId('user', String(claims.subject_id || ''))) return null;
+            return claims;
+        } catch { return null; }
+    }
+    return { verify };
+}
+
 /**
  * Project delegation (ADR-003 amendment 2026-10-12): may a first-party service start a job for this person in
  * this project? Network states the membership (GET /internal/projects/:project/members/:subject, capability
@@ -101,4 +118,21 @@ function createProjectMembership(config, { fetchImpl = globalThis.fetch, now = (
     return { allows, enabled: Boolean(tokens) };
 }
 
-module.exports = { createKeyProvider, createUserAuth, createProjectMembership, MEMBER_TTL_MS, DELEGABLE_ROLES };
+function createFillNotifier(config, { fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
+    const { clientId, clientSecret } = config.oauth;
+    const tokens = clientSecret ? createServiceTokenClient({ tokenUrl: `${config.network.internalUrl}/oauth/token`, clientId, clientSecret, audience: 'openvibe.network', scope: FILL_NOTIFY, fetch: fetchImpl, now }) : null;
+    async function notify(request) {
+        if (!tokens) return;
+        const res = await fetchImpl(`${config.network.internalUrl}/internal/notifications/push`, {
+            method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...(await tokens.authHeaders()) },
+            body: JSON.stringify({ subject: request.subject, type: 'RUN_FILL_REQUEST', category: 'service', priority: 'high',
+                title: 'Approve a sign-in', message: `${request.agent} on ${request.computer} wants to fill sign-in fields on ${request.origin}. Review what will be typed in Companion.`,
+                service: 'run', url: `https://openvibe.network/companion/fill-requests?request=${encodeURIComponent(request.id)}`, expires_at: request.expiresAt }),
+            signal: AbortSignal.timeout(5000),
+        });
+        if (!res.ok) throw new Error(`Network notification answered ${res.status}`);
+    }
+    return { notify, enabled: Boolean(tokens) };
+}
+
+module.exports = { createKeyProvider, createUserAuth, createFillAuth, createProjectMembership, createFillNotifier, MEMBER_TTL_MS, DELEGABLE_ROLES };
