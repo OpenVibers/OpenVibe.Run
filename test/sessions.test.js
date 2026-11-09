@@ -83,8 +83,8 @@ function fakeDesks() {
 
     await check('browser and throwaway presets are accepted; kept profiles and snapshots say plainly when unavailable', async () => {
         const unavailable = await t.call('POST', '/api/v1/sessions?template=kept-browser', { ...as(bea), body: { kind: 'browser' } });
-        assert.strictEqual(unavailable.status, 501);
-        assert.match(unavailable.json.detail, /not available on this machine/);
+        assert.strictEqual(unavailable.status, 503);
+        assert.match(unavailable.json.detail, /Saved sign-ins need/);
         const throwaway = await t.call('POST', '/api/v1/sessions?template=throwaway', { ...as(bea), body: { kind: 'browser' } });
         assert.strictEqual(throwaway.status, 201, throwaway.text);
         await sessions.finish(await sessions.get(throwaway.json.id), 'ended', 'test complete');

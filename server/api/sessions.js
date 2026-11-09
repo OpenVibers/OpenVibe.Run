@@ -80,8 +80,16 @@ function sessionsRouter({ sessions, verifyFillToken = async () => null }) {
     r.post('/sessions', wrap(async (req, res) => {
         const w = who(req, res, 'run.session.create');
         if (!w) return;
-        const { row, created } = await sessions.create(w.owner, w.via, req.body && typeof req.body === 'object' ? req.body : {}, { pool: req.query.pool, strategy: req.query.strategy, template: req.query.template });
+        const { row, created } = await sessions.create(w.owner, w.via, req.body && typeof req.body === 'object' ? req.body : {}, { pool: req.query.pool, strategy: req.query.strategy, template: req.query.template, actor: req.query.actor });
         res.status(created ? 201 : 200).json(sessions.present(row));
+    }));
+    r.get('/actor-profiles/:actor/sites', wrap(async (req, res) => {
+        const w = who(req, res, 'run.session.read');
+        if (w) res.json(await sessions.profileSites(w.owner, req.params.actor));
+    }));
+    r.delete('/actor-profiles/:actor/sites/:site', wrap(async (req, res) => {
+        const w = who(req, res, 'run.session.control');
+        if (w) res.json(await sessions.signOut(w.owner, req.params.actor, req.params.site));
     }));
     r.get('/sessions', wrap(async (req, res) => {
         const w = who(req, res, 'run.session.read');
@@ -101,6 +109,21 @@ function sessionsRouter({ sessions, verifyFillToken = async () => null }) {
         const w = who(req, res, 'run.session.control');
         if (!w) return;
         res.json(await sessions.act(row, req.body && typeof req.body === 'object' ? req.body : {}, w.actor));
+    }));
+    // Actor proxies the person's scoped page controls; the model's commands use the normal AI holder.
+    r.post('/sessions/:id/person-commands', wrap(async (req, res) => {
+        const row = await mine(req, res, 'run.session.control');
+        if (!row) return;
+        const w = who(req, res, 'run.session.control');
+        if (w.via && w.via !== 'service:actor') return problem(res, req, 403, 'capability.denied', 'Only Actor may pass on its person’s controls.');
+        if (!req.body || req.body.kind !== 'input') return problem(res, req, 422, 'run.session.invalid', 'Use the mouse or keyboard.');
+        res.json(await sessions.act(row, req.body, { kind: 'person', subject: w.owner.slice(5) }));
+    }));
+    r.post('/sessions/:id/profile/save', wrap(async (req, res) => {
+        const row = await mine(req, res, 'run.session.control');
+        if (!row) return;
+        await sessions.saveProfile(row);
+        res.json({ saved: true });
     }));
     r.post('/sessions/:id/fill-requests', wrap(async (req, res) => {
         const row = await mine(req, res, 'run.session.control', true);
