@@ -63,16 +63,22 @@ function createUserAuth(config, keys) {
         try {
             const claims = await verifyUserToken(token, { publicKey, issuer: config.network.issuer });
             return claims && typeof claims === 'object' ? claims : null;
-        } catch {
-            // Companion's Dock token is scoped and has its own issuer. Run accepts it only for the
-            // explicitly scoped approval route; ordinary session routes still apply their own policy.
-            try {
-                const dock = jwt.verify(token, publicKey, { algorithms: ['RS256'], issuer: `${String(config.network.issuer).replace(/\/+$/, '')}/dock`, audience: 'openvibe.network' });
-                if (dock.typ !== undefined || dock.purpose !== undefined || dock.actor_type !== undefined || dock.client_id !== 'companion' || dock.role !== undefined || dock.staff_caps !== undefined
-                    || !/^fam_[0-9a-f]{24}$/.test(String(dock.fam || '')) || !String(dock.scope || '').split(/\s+/).includes('run.fill.approve')) return null;
-                return dock;
-            } catch { return null; }
-        }
+        } catch { return null; }
+    }
+    return { verify };
+}
+
+/** Companion Dock tokens are accepted only by fill approval routes, never as general user auth. */
+function createFillAuth(config, keys) {
+    async function verify(token) {
+        if (!token || !keys.get()) return null;
+        try {
+            const claims = jwt.verify(token, keys.get(), { algorithms: ['RS256'], issuer: `${String(config.network.issuer).replace(/\/+$/, '')}/dock`, audience: 'openvibe.network' });
+            if (claims.typ !== undefined || claims.purpose !== undefined || claims.actor_type !== undefined || claims.client_id !== 'companion' || claims.role !== undefined || claims.staff_caps !== undefined
+                || !/^fam_[0-9a-f]{24}$/.test(String(claims.fam || '')) || !String(claims.scope || '').split(/\s+/).includes('run.fill.approve')
+                || !require('openvibe-contracts').ids.isSubjectId('user', String(claims.subject_id || ''))) return null;
+            return claims;
+        } catch { return null; }
     }
     return { verify };
 }
@@ -129,4 +135,4 @@ function createFillNotifier(config, { fetchImpl = globalThis.fetch, now = () => 
     return { notify, enabled: Boolean(tokens) };
 }
 
-module.exports = { createKeyProvider, createUserAuth, createProjectMembership, createFillNotifier, MEMBER_TTL_MS, DELEGABLE_ROLES };
+module.exports = { createKeyProvider, createUserAuth, createFillAuth, createProjectMembership, createFillNotifier, MEMBER_TTL_MS, DELEGABLE_ROLES };

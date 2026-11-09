@@ -128,19 +128,32 @@ function fakeDesks() {
         const held = await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...agent, body: { kind: 'screen', value: {} } });
         assert.strictEqual(held.status, 200, held.text);
         assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://example.org/path' } })).status, 422, 'the requested value must be an exact origin');
+        assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'http://example.org' } })).status, 422, 'plain HTTP is never eligible for credential entry');
+        const dock = asCompanion(ada);
+        for (const [method, route, body] of [
+            ['POST', `/api/v1/sessions/${ses.id}/commands`, { kind: 'screen', value: {} }],
+            ['GET', `/api/v1/sessions/${ses.id}/control`],
+        ]) assert.ok([401, 403].includes((await t.call(method, route, { ...dock, body })).status), `Dock token cannot use ${route}`);
+        assert.ok([401, 403].includes((await t.call('GET', `/api/v1/sessions/${ses.id}/still`, dock)).status), 'Dock token receives no capture access');
         const mismatch = await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://other.example' } });
         assert.strictEqual(mismatch.status, 409, 'Run reads and checks the active tab origin itself');
         const pending = await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://example.org' } });
         assert.strictEqual(pending.status, 201, pending.text);
+        assert.deepStrictEqual(Object.keys(pending.json).sort(), ['request_id', 'status']);
+        assert.strictEqual(pending.json.status, 'pending');
         const hiddenWhileFill = await t.call('GET', `/api/v1/sessions/${ses.id}/still`, as(ada));
         assert.strictEqual(hiddenWhileFill.status, 423, 'screenshots are withheld while a fill is pending');
-        assert.strictEqual((await t.call('GET', '/api/v1/fill-requests', as(ada))).status, 403, 'an ordinary user token cannot approve fills');
-        const requests = await t.call('GET', '/api/v1/fill-requests', asCompanion(ada));
-        assert.strictEqual(requests.json.requests[0].origin, 'https://example.org');
-        const grantFill = await t.call('POST', `/api/v1/fill-requests/${pending.json.id}/grant`, { ...asCompanion(ada), body: { request_id: pending.json.id, envelope: 'T1ZMSwAAAAAAAAA=' } });
+        assert.ok([401, 403].includes((await t.call('GET', '/api/v1/fill-requests', as(ada))).status), 'an ordinary user token cannot approve fills');
+        const requests = await t.call('GET', '/api/v1/fill-requests', dock);
+        assert.strictEqual(requests.json && requests.json.requests && requests.json.requests[0] && requests.json.requests[0].origin, 'https://example.org', requests.text);
+        const oversized = await t.call('POST', `/api/v1/fill-requests/${pending.json.request_id}/grant`, { ...dock, body: { request_id: pending.json.request_id, envelope: 'A'.repeat(16_388) } });
+        assert.strictEqual(oversized.status, 413, 'oversized envelopes are rejected before claim');
+        assert.strictEqual(oversized.json.code, 'run.fill.envelope');
+        const grantFill = await t.call('POST', `/api/v1/fill-requests/${pending.json.request_id}/grant`, { ...dock, body: { request_id: pending.json.request_id, envelope: 'T1ZMSwAAAAAAAAA=' } });
         assert.strictEqual(grantFill.json.outcome, 'ok', grantFill.text);
         assert.ok(!/username|password|secret|code/i.test(JSON.stringify([pending.json, requests.json, grantFill.json])), 'no response contains credential contents');
-        assert.strictEqual((await t.call('POST', `/api/v1/fill-requests/${pending.json.id}/grant`, { ...asCompanion(ada), body: { request_id: pending.json.id, envelope: 'T1ZMSwAAAAAAAAA=' } })).status, 404, 'a request cannot be reused');
+        assert.strictEqual((await t.call('GET', `/api/v1/sessions/${ses.id}/still`, as(ada))).status, 423, 'captures remain withheld after completion until resume');
+        assert.strictEqual((await t.call('POST', `/api/v1/fill-requests/${pending.json.request_id}/grant`, { ...dock, body: { request_id: pending.json.request_id, envelope: 'T1ZMSwAAAAAAAAA=' } })).status, 404, 'a request cannot be reused');
         await new Promise((resolve) => setTimeout(resolve, 5100));
         assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...as(ada), body: { kind: 'screen', value: {} } })).status, 403, 'owner must take back before sending input');
         lease = (await t.call('POST', `/api/v1/sessions/${ses.id}/control/take`, as(ada))).json.lease;

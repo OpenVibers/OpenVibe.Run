@@ -180,7 +180,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         return row.control_lease || lease;
     }
     async function requestControl(row, actor) {
-        const activeFill = fills.has(row.id) || await db.maybe("SELECT id FROM run_session_fill_requests WHERE session_id = $1 AND state IN ('pending','running') AND expires_at > $2 LIMIT 1", [row.id, now()]);
+        const activeFill = fills.has(row.id) || await db.maybe("SELECT id FROM run_session_fill_requests WHERE session_id = $1 AND (state IN ('pending','running') OR (state IN ('ok','failed','expired') AND resumed_at IS NULL)) LIMIT 1", [row.id]);
         if (activeFill) throw new SessionError(423, 'run.fill.in_progress', 'control is paused while a sign-in fill is active');
         const current = await controlLease(row);
         const target = actorHolder(actor, row);
@@ -198,7 +198,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         return saved.control_lease;
     }
     async function grantControl(row, target, reason = 'granted') {
-        const activeFill = await db.maybe("SELECT id FROM run_session_fill_requests WHERE session_id = $1 AND state IN ('pending','running') AND expires_at > $2 LIMIT 1", [row.id, now()]);
+        const activeFill = await db.maybe("SELECT id FROM run_session_fill_requests WHERE session_id = $1 AND (state IN ('pending','running') OR (state IN ('ok','failed','expired') AND resumed_at IS NULL)) LIMIT 1", [row.id]);
         if (activeFill && reason !== 'fill_finished') throw new SessionError(423, 'run.fill.in_progress', 'control is paused while a sign-in fill is active');
         const current = await controlLease(row);
         if (!target || !['person', 'ai', 'nobody'].includes(target.kind)) throw new SessionError(422, 'run.session.control_target', 'target kind is person, ai or nobody');
@@ -218,7 +218,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
 
     const RESULTS = new Set(['ack', 'nack', 'refused', 'expired']);
     async function act(row, cmd, actor = null) {
-        const activeFill = fills.has(row.id) || await db.maybe("SELECT id FROM run_session_fill_requests WHERE session_id = $1 AND state IN ('pending','running') AND expires_at > $2 LIMIT 1", [row.id, now()]);
+        const activeFill = fills.has(row.id) || await db.maybe("SELECT id FROM run_session_fill_requests WHERE session_id = $1 AND (state IN ('pending','running') OR (state IN ('ok','failed','expired') AND resumed_at IS NULL)) LIMIT 1", [row.id]);
         if (activeFill) throw new SessionError(423, 'run.fill.in_progress', 'control is paused while a sign-in fill is active');
         const v = contracts.validate('run.session-control-request@1', cmd);
         if (!v.valid) throw new SessionError(422, 'run.session.invalid', `invalid command: ${(v.errors && v.errors[0] && v.errors[0].message) || 'bad value'}`.slice(0, 300));
@@ -248,22 +248,26 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
     }
 
     const exactOrigin = (value) => {
-        try { const u = new URL(String(value)); if (!['https:', 'http:'].includes(u.protocol) || u.origin !== value) return null; return u.origin; }
+        try { const u = new URL(String(value)); if (u.protocol !== 'https:' || u.origin !== value) return null; return u.origin; }
         catch { return null; }
     };
     async function createFillRequest(row, requestedOrigin, actor) {
         const origin = exactOrigin(requestedOrigin);
-        if (!origin) throw new SessionError(422, 'run.fill.origin', 'origin must be an exact http(s) origin');
+        if (!origin) throw new SessionError(422, 'run.fill.origin', 'origin must be an exact HTTPS origin');
         if (row.state !== 'running' || !row.machine || !row.desk) throw new SessionError(409, 'run.session.not_running', 'the session is not running');
         if (!['user-owned', 'first-party'].includes(row.trust)) throw new SessionError(403, 'run.fill.machine_forbidden', 'blind fill is available only on your machine or OpenVibe machines');
         const lease = await controlLease(row);
         const holder = actorHolder(actor, row);
         if (holder.kind !== 'ai' || !sameHolder(lease.holder, holder)) throw new SessionError(403, 'run.fill.control_required', 'the agent must hold this session control lease');
         if (fills.has(row.id)) throw new SessionError(409, 'run.fill.pending', 'a sign-in approval is already pending');
+        const recent = await db.maybe("SELECT decision, COALESCE(finished_at, expires_at) AS ended_at FROM run_session_fill_requests WHERE session_id = $1 ORDER BY created_at DESC LIMIT 1", [row.id]);
+        if (recent && ['declined', 'expired'].includes(recent.decision) && now() - Number(recent.ended_at) < 60_000) throw new SessionError(429, 'run.fill.cooldown', 'wait before asking for another sign-in approval');
+        const hourly = await db.many("SELECT id FROM run_session_fill_requests WHERE session_id = $1 AND created_at > $2 LIMIT 10", [row.id, now() - 60 * 60 * 1000]);
+        if (hourly.length >= 10) throw new SessionError(429, 'run.fill.limit', 'this session reached its sign-in approval limit');
         const current = await desks.act(row.machine, row.desk, bare(row.owner), { id: `fill-origin-${now()}`, kind: 'browser', value: { action: 'active_origin' } });
         const activeOrigin = current && current.result === 'ack' && current.data && current.data.origin;
         if (exactOrigin(activeOrigin) !== origin) throw new SessionError(409, 'run.fill.origin_mismatch', 'the active tab origin does not match');
-        const id = `fill_${require('openvibe-contracts').ids.ulid()}`;
+        const id = `fr_${require('openvibe-contracts').ids.ulid()}`;
         const created = now(), expires = created + 120_000;
         await db.maybe(`INSERT INTO run_session_fill_requests (id, session_id, machine_node_id, agent_subject, origin, state, created_at, expires_at) VALUES ($1,$2,$3,$4,$5,'pending',$6,$7) RETURNING id`, [id, row.id, row.machine, holder.subject, origin, created, expires]);
         fills.set(row.id, id);
@@ -271,14 +275,14 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         await saveLease(row, paused, 'awaiting_fill');
         Promise.resolve(notifyFill({ subject: bare(row.owner), id, origin, agent: String(holder.subject).slice(0, 200), computer: String(row.machine).slice(0, 200), expiresAt: new Date(expires).toISOString() }))
             .catch((e) => log.warn(`[Run] fill notification ${id}: ${e.code || e.message}`));
-        return { id, session_id: row.id, machine_node_id: row.machine, origin, created_at: new Date(created).toISOString(), expires_at: new Date(expires).toISOString(), agent: String(holder.subject).slice(0, 200), computer: String(row.machine).slice(0, 200) };
+        return { request_id: id, status: 'pending' };
     }
     async function approveFill(id, envelope, owner) {
         const request = await db.maybe("SELECT * FROM run_session_fill_requests WHERE id = $1 AND state = 'pending' AND expires_at > $2", [id, now()]);
         if (!request) throw new SessionError(404, 'run.fill.not_found', 'no pending approval');
         const row = await store.get(db, request.session_id);
         if (!row || row.owner !== owner) throw new SessionError(404, 'run.fill.not_found', 'no pending approval');
-        if (typeof envelope !== 'string' || envelope.length < 12 || envelope.length > 16_777_216 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(envelope)) throw new SessionError(422, 'run.fill.envelope', 'a base64 encrypted envelope is required');
+        if (typeof envelope !== 'string' || envelope.length < 12 || envelope.length > 16_384 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(envelope)) throw new SessionError(413, 'run.fill.envelope', 'the base64 encrypted envelope must be at most 16 KB');
         const claimed = await db.maybe("UPDATE run_session_fill_requests SET state = 'running', decision = 'approved' WHERE id = $1 AND state = 'pending' AND expires_at > $2 RETURNING id", [id, now()]);
         if (!claimed) throw new SessionError(409, 'run.fill.used', 'the approval was already used');
         const result = await desks.act(row.machine, row.desk, bare(row.owner), { id: `fill-${id}`, kind: 'browser', value: { action: 'blind_fill', request_id: id, origin: request.origin, envelope } }).catch(() => null);
@@ -287,14 +291,14 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         setTimeout(async () => {
             await resumeFill(id, row.id, request.agent_subject);
         }, 5000).unref?.();
-        return { request_id: id, outcome, reason: outcome === 'ok' ? null : 'fill_failed' };
+        return { request_id: id, outcome, reason: outcome === 'ok' ? null : 'decrypt_failed' };
     }
     async function decideFill(id, decision, owner) {
         if (decision !== 'declined') throw new SessionError(422, 'run.fill.decision', 'unsupported decision');
         const row = await db.maybe("UPDATE run_session_fill_requests f SET state = 'failed', decision = 'declined', outcome = 'failed', finished_at = $1 FROM run_sessions s WHERE f.id = $2 AND f.session_id = s.id AND s.owner = $3 AND f.state = 'pending' AND f.expires_at > $1 RETURNING f.session_id, f.agent_subject", [now(), id, owner]);
         if (!row) throw new SessionError(404, 'run.fill.not_found', 'no pending approval');
         setTimeout(async () => { await resumeFill(id, row.session_id, row.agent_subject); }, 5000).unref?.();
-        return { request_id: id, outcome: 'failed', reason: 'declined' };
+        return { request_id: id, outcome: 'failed', reason: 'refused' };
     }
     async function resumeFill(id, sessionId, agentSubject) {
         const claimed = await db.maybe("UPDATE run_session_fill_requests SET resumed_at = $1 WHERE id = $2 AND resumed_at IS NULL RETURNING id", [now(), id]);
@@ -306,7 +310,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
     async function getFillRequest(id, sessionId, owner) {
         const r = await db.maybe('SELECT f.id, f.origin, f.state, f.outcome, f.created_at, f.expires_at FROM run_session_fill_requests f JOIN run_sessions s ON s.id=f.session_id WHERE f.id=$1 AND f.session_id=$2 AND s.owner=$3', [id, sessionId, owner]);
         if (!r) throw new SessionError(404, 'run.fill.not_found', 'no such fill request');
-        return { request_id:r.id, origin:r.origin, state:r.state, outcome:r.outcome || null, created_at:new Date(Number(r.created_at)).toISOString(), expires_at:new Date(Number(r.expires_at)).toISOString(), reason:r.outcome === 'failed' ? 'fill_failed' : null };
+        return { request_id:r.id, origin:r.origin, state:r.state, outcome:r.outcome || null, created_at:new Date(Number(r.created_at)).toISOString(), expires_at:new Date(Number(r.expires_at)).toISOString(), reason:r.outcome === 'failed' ? 'refused' : null };
     }
     async function listFillRequests(owner) {
         const rows = await db.many("SELECT f.id, f.session_id, f.machine_node_id, f.origin, f.created_at, f.expires_at, f.agent_subject FROM run_session_fill_requests f JOIN run_sessions s ON s.id = f.session_id WHERE s.owner = $1 AND f.state = 'pending' AND f.expires_at > $2 ORDER BY f.created_at", [owner, now()]);
@@ -352,7 +356,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
      */
     async function still(row) {
         if (!row) throw new SessionError(404, 'run.session.not_found', 'no such session');
-        const protectedFill = fills.has(row.id) || await db.maybe("SELECT id FROM run_session_fill_requests WHERE session_id = $1 AND state IN ('pending','running') AND expires_at > $2 LIMIT 1", [row.id, now()]);
+        const protectedFill = fills.has(row.id) || await db.maybe("SELECT id FROM run_session_fill_requests WHERE session_id = $1 AND (state IN ('pending','running') OR (state IN ('ok','failed','expired') AND resumed_at IS NULL)) LIMIT 1", [row.id]);
         if (protectedFill) throw new SessionError(423, 'run.fill.in_progress', 'capture withheld while a sign-in fill is active');
         if (row.state !== 'running' || !row.machine || !row.desk) throw new SessionError(404, 'run.session.no_still', 'this session has no picture');
         if (row.curtain) return { bytes: curtain.BYTES, type: curtain.TYPE, width: curtain.WIDTH, height: curtain.HEIGHT, curtain: true };
