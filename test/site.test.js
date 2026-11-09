@@ -14,7 +14,7 @@ const { boot, check, done } = require('./helpers/app');
             assert.strictEqual(r.status, 200);
             assert.match(r.headers.get('content-type'), /text\/html/);
             assert.match(r.text, /<title>OpenVibe\.Run: run jobs on your own machine/);
-            assert.ok(r.text.includes('href="https://openvibe.bot/machines"'), 'it leads with pairing your own machine');
+            assert.ok(r.text.includes('href="https://openvibe.link/machines"'), 'it leads with pairing your own machine');
             assert.match(r.text, /<th scope="row">browser<\/th>[\s\S]*?Built, not switched on yet/, 'the class table says what works today');
             const faq = [...r.text.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((m) => JSON.parse(m[1])).find((j) => j['@type'] === 'FAQPage');
             assert.ok(faq && faq.mainEntity.length >= 4, 'the catalog\'s questions as FAQPage data');

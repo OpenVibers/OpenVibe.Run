@@ -9,7 +9,7 @@
  *   { kind: 'anonymous' }
  *
  * A request that presents a token is judged on that token alone: a bad one is refused, never downgraded.
- * A node principal (nod_…) is not a Run principal and is refused like any other non-service token.
+ * A node principal (lnk_…) is not a Run principal and is refused like any other non-service token.
  *
  * The project a job belongs to comes from the token's own project_id claim (a developer app or agent
  * token names one), never from the request body or a query: the requester and the billed project are
