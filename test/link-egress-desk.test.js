@@ -41,6 +41,10 @@ const store = require('../server/sessions/store');
         const ends = calls.filter(c => c.method === 'DELETE');
         assert.ok(ends[0].url.includes('/internal/egress/'), 'revoke browsing before ending the desk');
         assert.ok(ends[1].url.includes('/desk-leases/'));
-        console.log('Link desk integration: wait before browser, credential separation, renew, revoke and persisted label passed');
+        await store.update(dbtest.db, session, { state: 'ended', ended_at: at + 1000, end_reason: 'ended' });
+        const late = await store.update(dbtest.db, session, { state: 'running', machine, desk: body.desk });
+        assert.equal(late.state, 'ended', 'late desk responses cannot revive an ended session');
+        assert.equal((await store.get(dbtest.db, session)).state, 'ended');
+        console.log('Link desk integration: wait before browser, credential separation, renew, revoke, persisted label and terminal session state passed');
     } finally { await dbtest.close(); }
 })().catch(e => { console.error(e); process.exitCode = 1; });

@@ -114,7 +114,8 @@ async function update(t, id, fields) {
     const cols = Object.keys(fields).filter((k) => COLUMNS.includes(k) && k !== 'id');
     if (!cols.length) return get(t, id);
     const vals = cols.map((c) => (JSON_COLUMNS.has(c) && fields[c] != null ? JSON.stringify(fields[c]) : fields[c]));
-    const row = await t.maybe(`UPDATE run_sessions SET ${cols.map((c, i) => `${c} = $${i + 2}`).join(', ')} WHERE id = $1 RETURNING *`, [id, ...vals]);
+    // A late placement reply must never revive a session after its owner ended it.
+    const row = await t.maybe(`UPDATE run_sessions SET ${cols.map((c, i) => `${c} = $${i + 2}`).join(', ')} WHERE id = $1 AND state <> 'ended' RETURNING *`, [id, ...vals]) || await t.maybe('SELECT * FROM run_sessions WHERE id = $1', [id]);
     if (row?.state === 'ended') void require('./link-egress').revokeKnownSession(id).catch(() => {});
     return fromDb(row);
 }
