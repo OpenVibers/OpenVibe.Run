@@ -22,7 +22,7 @@ const { http } = require('openvibe-contracts');
 const { isLoopbackDirect } = require('openvibe-shared/metrics');
 const { loadConfig } = require('./config');
 const { openDb } = require('./db');
-const { createKeyProvider, createUserAuth, createProjectMembership } = require('./network');
+const { createKeyProvider, createUserAuth, createProjectMembership, createFillNotifier } = require('./network');
 const { createRunOutbox } = require('./events/outbox');
 const { createStreamTickets } = require('./jobs/ticket');
 const { createJobStream } = require('./jobs/stream');
@@ -59,11 +59,12 @@ function createApp(opts = {}) {
     // Run cannot mint the Bot token — and nothing runs until server/index.js calls its start().
     const dispatch = opts.dispatch || createDispatcher({ config, db, store: require('./jobs/store'), events, stream, log, now, fetchImpl });
     const membership = opts.membership || createProjectMembership(config, { fetchImpl, now });
+    const fillNotifier = opts.fillNotifier || createFillNotifier(config, { fetchImpl, now });
     const apiAuth = createApiAuth({ config, keys, userAuth, membership, log });
     // Run sessions (contracts 0.223.0): browser desks Bot leases per session; the tick starts in server/index.js.
     const desks = opts.desks || createDeskClient({ config, fetchImpl, now });
     const broker = opts.broker || require('./compute/broker').createBroker({ config, db, desks, now, fetchImpl, log });
-    const sessions = opts.sessions || createSessions({ config, db, desks, outbox, now, log, broker });
+    const sessions = opts.sessions || createSessions({ config, db, desks, outbox, now, log, broker, notifyFill: fillNotifier.notify });
     broker.attachSessions(async (id) => { const row = await sessions.get(id); if (row) await sessions.finish(row, 'ttl', 'compute rental budget exhausted'); });
     broker.attachJobs(async (machine) => {
         const jobs = require('./jobs/store');

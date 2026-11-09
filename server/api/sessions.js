@@ -44,6 +44,15 @@ function sessionsRouter({ sessions }) {
         if (!USER_SUBJECT.test(subject) || !ids.isSubjectId('user', subject)) { problem(res, req, 422, 'run.session.subject_required', 'a service opens a session for a person: X-OV-Subject usr_…'); return null; }
         return { owner: `user:${subject}`, via: `service:${sub.slice(4)}`, actor: { kind: 'ai', subject: sub } };
     }
+    function whoFill(req, res) {
+        const p = req.principal || { kind: 'anonymous' };
+        const scopes = String(p.claims && p.claims.scope || '').split(/\s+/);
+        if (p.kind !== 'user' || p.claims.client_id !== 'companion' || !scopes.includes('run.fill.approve')) {
+            problem(res, req, p.kind === 'anonymous' ? 401 : 403, 'capability.denied', 'Companion sign-in with run.fill.approve is required');
+            return null;
+        }
+        return { owner: `user:${p.subject}` };
+    }
     async function mine(req, res, cap, allowGuest = false) {
         const w = who(req, res, cap);
         if (!w) return null;
@@ -83,6 +92,23 @@ function sessionsRouter({ sessions }) {
         const { row, created } = await sessions.create(w.owner, w.via, req.body && typeof req.body === 'object' ? req.body : {}, { pool: req.query.pool, strategy: req.query.strategy, template: req.query.template });
         res.status(created ? 201 : 200).json(sessions.present(row));
     }));
+    r.get('/fill-requests', wrap(async (req, res) => {
+        const w = whoFill(req, res);
+        if (!w) return;
+        res.json({ requests: await sessions.listFillRequests(w.owner) });
+    }));
+    r.post('/fill-requests/:id/grant', wrap(async (req, res) => {
+        const w = whoFill(req, res);
+        if (!w) return;
+        const body = req.body && typeof req.body === 'object' ? req.body : {};
+        if (body.request_id !== req.params.id) return problem(res, req, 422, 'run.fill.request_id', 'request_id must match the route');
+        res.json(await sessions.approveFill(req.params.id, body.envelope, w.owner));
+    }));
+    r.post('/fill-requests/:id/decline', wrap(async (req, res) => {
+        const w = whoFill(req, res);
+        if (!w) return;
+        res.json(await sessions.decideFill(req.params.id, 'declined', w.owner));
+    }));
     r.get('/sessions', wrap(async (req, res) => {
         const w = who(req, res, 'run.session.read');
         if (!w) return;
@@ -101,6 +127,20 @@ function sessionsRouter({ sessions }) {
         const w = who(req, res, 'run.session.control');
         if (!w) return;
         res.json(await sessions.act(row, req.body && typeof req.body === 'object' ? req.body : {}, w.actor));
+    }));
+    r.post('/sessions/:id/fill-requests', wrap(async (req, res) => {
+        const row = await mine(req, res, 'run.session.control', true);
+        if (!row) return;
+        const w = who(req, res, 'run.session.control');
+        if (!w) return;
+        res.status(201).json(await sessions.createFillRequest(row, req.body && req.body.origin, w.actor));
+    }));
+    r.get('/sessions/:id/fill-requests/:requestId', wrap(async (req, res) => {
+        const row = await mine(req, res, 'run.session.control', true);
+        if (!row) return;
+        const w = who(req, res, 'run.session.control');
+        if (!w) return;
+        res.json(await sessions.getFillRequest(req.params.requestId, row.id, w.owner));
     }));
     r.post('/sessions/:id/control/request', wrap(async (req, res) => {
         const row = await mine(req, res, 'run.session.control', true);

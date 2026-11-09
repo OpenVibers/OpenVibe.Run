@@ -11,9 +11,11 @@
  * createProjectMembership), can act on jobs — every route says so.
  */
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 const { verifyUserToken, createServiceTokenClient } = require('openvibe-sdk/auth');
 
 const MEMBER_READ = 'network.project.member.read';
+const FILL_NOTIFY = 'network.notifications.push';
 const DELEGABLE_ROLES = new Set(['admin', 'owner']);
 const MEMBER_TTL_MS = 60_000;   // the amendment's ceiling: a removed member or an archived project stops new jobs within a minute
 
@@ -61,7 +63,16 @@ function createUserAuth(config, keys) {
         try {
             const claims = await verifyUserToken(token, { publicKey, issuer: config.network.issuer });
             return claims && typeof claims === 'object' ? claims : null;
-        } catch { return null; }
+        } catch {
+            // Companion's Dock token is scoped and has its own issuer. Run accepts it only for the
+            // explicitly scoped approval route; ordinary session routes still apply their own policy.
+            try {
+                const dock = jwt.verify(token, publicKey, { algorithms: ['RS256'], issuer: `${String(config.network.issuer).replace(/\/+$/, '')}/dock`, audience: 'openvibe.network' });
+                if (dock.typ !== undefined || dock.purpose !== undefined || dock.actor_type !== undefined || dock.client_id !== 'companion' || dock.role !== undefined || dock.staff_caps !== undefined
+                    || !/^fam_[0-9a-f]{24}$/.test(String(dock.fam || '')) || !String(dock.scope || '').split(/\s+/).includes('run.fill.approve')) return null;
+                return dock;
+            } catch { return null; }
+        }
     }
     return { verify };
 }
@@ -101,4 +112,21 @@ function createProjectMembership(config, { fetchImpl = globalThis.fetch, now = (
     return { allows, enabled: Boolean(tokens) };
 }
 
-module.exports = { createKeyProvider, createUserAuth, createProjectMembership, MEMBER_TTL_MS, DELEGABLE_ROLES };
+function createFillNotifier(config, { fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
+    const { clientId, clientSecret } = config.oauth;
+    const tokens = clientSecret ? createServiceTokenClient({ tokenUrl: `${config.network.internalUrl}/oauth/token`, clientId, clientSecret, audience: 'openvibe.network', scope: FILL_NOTIFY, fetch: fetchImpl, now }) : null;
+    async function notify(request) {
+        if (!tokens) return;
+        const res = await fetchImpl(`${config.network.internalUrl}/internal/notifications/push`, {
+            method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...(await tokens.authHeaders()) },
+            body: JSON.stringify({ subject: request.subject, type: 'RUN_FILL_REQUEST', category: 'service', priority: 'high',
+                title: 'Approve a sign-in', message: `${request.agent} on ${request.computer} wants to fill sign-in fields on ${request.origin}. Review what will be typed in Companion.`,
+                service: 'run', url: `https://openvibe.network/companion/fill-requests?request=${encodeURIComponent(request.id)}`, expires_at: request.expiresAt }),
+            signal: AbortSignal.timeout(5000),
+        });
+        if (!res.ok) throw new Error(`Network notification answered ${res.status}`);
+    }
+    return { notify, enabled: Boolean(tokens) };
+}
+
+module.exports = { createKeyProvider, createUserAuth, createProjectMembership, createFillNotifier, MEMBER_TTL_MS, DELEGABLE_ROLES };

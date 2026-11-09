@@ -41,6 +41,8 @@ function fakeDesks() {
         async act(machine, desk, subject, cmd) {
             calls.push(['act', machine, desk, subject, cmd]);
             if (!leases.has(`${machine} ${desk}`)) return null;
+            if (cmd.value && cmd.value.action === 'active_origin') return { machine_id: machine, desk, id: cmd.id, result: 'ack', data: { origin: 'https://example.org' } };
+            if (cmd.value && cmd.value.action === 'blind_fill') return { machine_id: machine, desk, id: cmd.id, result: 'ack', data: { outcome: 'ok' } };
             return { machine_id: machine, desk, id: cmd.id, result: 'ack', data: cmd.kind === 'screen' ? { format: 'jpeg', width: 1280, height: 800, content_b64: '/9j/' } : { url: 'https://example.org/', title: 'Example' } };
         },
         async end(machine, desk) { calls.push(['end', machine, desk]); const had = leases.delete(`${machine} ${desk}`); return had ? { ended: true, stopped: true } : null; },
@@ -55,6 +57,7 @@ function fakeDesks() {
     const ada = ids.newId('user');
     const bea = ids.newId('user');
     const as = (subject) => ({ token: t.network.signUser({ subject }) });
+    const asCompanion = (subject) => ({ token: t.network.signDock({ subject }) });
     const valid = (doc, id) => { const v = contracts.validate(id, doc); assert.ok(v.valid, `${id}: ${JSON.stringify(v.errors)}\n${JSON.stringify(doc)}`); };
     const usageOf = async (id) => (await t.db.many('SELECT envelope FROM run_usage_outbox ORDER BY id')).map((r) => (typeof r.envelope === 'string' ? JSON.parse(r.envelope) : r.envelope)).filter((u) => u.id.startsWith(`run:${id}:`));
 
@@ -124,6 +127,21 @@ function fakeDesks() {
         valid(grant.json.lease, 'common.control-lease@1');
         const held = await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...agent, body: { kind: 'screen', value: {} } });
         assert.strictEqual(held.status, 200, held.text);
+        assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://example.org/path' } })).status, 422, 'the requested value must be an exact origin');
+        const mismatch = await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://other.example' } });
+        assert.strictEqual(mismatch.status, 409, 'Run reads and checks the active tab origin itself');
+        const pending = await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://example.org' } });
+        assert.strictEqual(pending.status, 201, pending.text);
+        const hiddenWhileFill = await t.call('GET', `/api/v1/sessions/${ses.id}/still`, as(ada));
+        assert.strictEqual(hiddenWhileFill.status, 423, 'screenshots are withheld while a fill is pending');
+        assert.strictEqual((await t.call('GET', '/api/v1/fill-requests', as(ada))).status, 403, 'an ordinary user token cannot approve fills');
+        const requests = await t.call('GET', '/api/v1/fill-requests', asCompanion(ada));
+        assert.strictEqual(requests.json.requests[0].origin, 'https://example.org');
+        const grantFill = await t.call('POST', `/api/v1/fill-requests/${pending.json.id}/grant`, { ...asCompanion(ada), body: { request_id: pending.json.id, envelope: 'T1ZMSwAAAAAAAAA=' } });
+        assert.strictEqual(grantFill.json.outcome, 'ok', grantFill.text);
+        assert.ok(!/username|password|secret|code/i.test(JSON.stringify([pending.json, requests.json, grantFill.json])), 'no response contains credential contents');
+        assert.strictEqual((await t.call('POST', `/api/v1/fill-requests/${pending.json.id}/grant`, { ...asCompanion(ada), body: { request_id: pending.json.id, envelope: 'T1ZMSwAAAAAAAAA=' } })).status, 404, 'a request cannot be reused');
+        await new Promise((resolve) => setTimeout(resolve, 5100));
         assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...as(ada), body: { kind: 'screen', value: {} } })).status, 403, 'owner must take back before sending input');
         lease = (await t.call('POST', `/api/v1/sessions/${ses.id}/control/take`, as(ada))).json.lease;
         assert.deepStrictEqual(lease.holder, { kind: 'person', subject: ada });
