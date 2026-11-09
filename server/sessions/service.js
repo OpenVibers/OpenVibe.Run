@@ -44,6 +44,7 @@ class SessionError extends Error {
 }
 
 function createSessions({ config, db, desks, outbox, now = () => Date.now(), log = console, broker = null }) {
+    const profiles = require('./profiles').createProfiles({ config, db, now, log });
     const cfg = config.sessions || {};
     const tickMs = cfg.tickMs || 2000;
     const leaseCheckMs = cfg.leaseCheckMs || 30_000;
@@ -94,13 +95,16 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         const strategy = compute.strategy || null;
         const template = compute.template || 'browser';
         if (!['browser', 'kept-browser', 'throwaway'].includes(template)) throw new SessionError(422, 'run.session.template', 'template must be browser, kept-browser or throwaway');
-        if (template === 'kept-browser') throw new SessionError(501, 'run.session.template_unavailable', 'Kept browser profiles are not available on this machine.');
+        const actorId = compute.actor || null;
+        if (actorId && !/^act_[0-9A-HJKMNP-TV-Z]{26}$/.test(actorId)) throw new SessionError(422, 'run.profile.invalid', 'Choose a valid Actor.');
+        if (template === 'kept-browser' && (!actorId || !profiles.enabled)) throw new SessionError(503, 'run.profile.unavailable', 'Saved sign-ins need an Actor and Run’s durable signing key.');
+        if (actorId && template !== 'kept-browser') throw new SessionError(422, 'run.profile.invalid', 'An Actor uses a kept browser.');
         if (strategy && !require('openvibe-sdk/compute').STRATEGIES.includes(strategy)) throw new SessionError(422, 'run.compute.strategy', 'unknown compute strategy');
         if (strategy && !pool) throw new SessionError(422, 'run.compute.pool', 'a strategy requires a compute pool');
         if (pool) { if (!broker) throw new SessionError(503, 'run.compute.off'); await broker.poolConfig(pool); }
         const v = contracts.validate('run.session-create-request@1', body);
         if (!v.valid) throw new SessionError(422, 'run.session.invalid', `invalid session request: ${(v.errors && v.errors[0] && v.errors[0].message) || 'bad value'}`.slice(0, 300));
-        const digest = store.digestOf(pool ? { ...body, compute_pool: pool, compute_strategy: strategy } : body);
+        const digest = store.digestOf({ ...body, compute_pool: pool, compute_strategy: strategy, template, actor_id: actorId });
         if (body.idempotency_key) {
             const earlier = await db.maybe('SELECT * FROM run_sessions WHERE owner = $1 AND idempotency_key = $2 AND created_at > $3', [owner, body.idempotency_key, now() - 86_400_000]);
             if (earlier) {
@@ -114,19 +118,28 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         const row = {
             id, owner, via: via || null, kind: 'browser', state: 'placing',
             width: body.width || 1280, height: body.height || 800, ttl_s: body.ttl_s || 3600, idle_s: body.idle_s || 900,
-            compute_pool: pool, compute_strategy: strategy, compute_decision: null, template, machine_asked: body.machine || null, requirements: body.requirements || null, idempotency_key: body.idempotency_key || null,
+            compute_pool: pool, compute_strategy: strategy, compute_decision: null, template, actor_id: actorId, machine_asked: body.machine || null, requirements: body.requirements || null, idempotency_key: body.idempotency_key || null,
             request_digest: digest, reasons: [], task_id: body.task_id || null, curtain: false,
             control_lease: { thing: `run.session:${id}`, holder: { kind: 'person', subject: bare(owner) }, since_ms: at, expires_ms: at + 60_000, watchers: [], seq: 1 },
             created_at: at, updated_at: at,
         };
-        const out = await store.insert(db, row);
+        let out;
+        try { out = await store.insert(db, row); }
+        catch (e) { if (e.code === '23505' && actorId) throw new SessionError(409, 'run.profile.busy', 'This Actor already has an open computer.'); throw e; }
+        if (!out.row && actorId) throw new SessionError(409, 'run.profile.busy', 'This Actor already has an open computer.');
         if (out.created) setImmediate(() => { tick().catch((e) => log.warn(`[Run] session tick: ${e.message}`)); });
         return out;
     }
 
-    async function finish(row, reason, detail = null, { release = true } = {}) {
+    async function finish(row, reason, detail = null, options = {}) {
+        return row && row.actor_id ? profiles.lock(row.owner, row.actor_id, async () => finishLocked(await store.get(db, row.id), reason, detail, options)) : finishLocked(row, reason, detail, options);
+    }
+    async function finishLocked(row, reason, detail = null, { release = true } = {}) {
         if (!row || row.state === 'ended') return row;
         if (release && row.machine && row.desk && desks.enabled) {
+            if (row.actor_id) {
+                try { await saveProfile(row, true); } catch { detail = 'The last sign-in changes could not be saved; the earlier saved copy is kept.'; }
+            }
             try { await desks.end(row.machine, row.desk, bare(row.owner)); } catch (e) { log.warn(`[Run] session ${row.id}: the desk did not end cleanly (${e.code || e.message})`); }
         }
         return db.tx(async (t) => {
@@ -237,6 +250,35 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         if (r.data && typeof r.data === 'object' && out.result === 'ack') out.data = r.data;
         await logAction(row, out.id, cmd, caller, out.result, out.code || null);
         return out;
+    }
+
+    async function profileCommand(row, action, value = {}) {
+        const result = await desks.act(row.machine, row.desk, bare(row.owner), { id: `profile-${require('crypto').randomUUID()}`, kind: 'browser', value: { action, ...value } });
+        if (!result || result.result !== 'ack') throw new SessionError(502, 'run.profile.unavailable', 'This computer could not save its sign-ins.');
+        return result.data;
+    }
+    async function saveProfile(row, locked = false) {
+        if (!row.actor_id) return;
+        if (!locked) return profiles.lock(row.owner, row.actor_id, () => saveProfile(row, true));
+        const fresh = await store.get(db, row.id);
+        if (!fresh || fresh.state === 'ended') return;
+        await profiles.write(row.owner, row.actor_id, await profileCommand(fresh, 'profile_export'));
+    }
+    async function profileSites(owner, actorId) {
+        const row = await db.maybe("SELECT * FROM run_sessions WHERE owner=$1 AND actor_id=$2 AND state='running'", [owner, actorId]);
+        if (row) await saveProfile(row);
+        return { sites: await profiles.sites(owner, actorId) };
+    }
+    async function signOut(owner, actorId, site) {
+        if (!/^[a-z0-9.-]{1,253}$/.test(site || '')) throw new SessionError(422, 'run.profile.invalid', 'Choose a site.');
+        // Lock the session row against lifecycle changes while clearing the live and saved copies.
+        return profiles.lock(owner, actorId, async t => {
+            const row = await t.maybe("SELECT * FROM run_sessions WHERE owner=$1 AND actor_id=$2 AND state<>'ended' FOR UPDATE", [owner, actorId]);
+            if (row && row.state !== 'running') throw new SessionError(409, 'run.profile.busy', 'Wait for the computer to open.');
+            if (row) { await profileCommand(row, 'profile_sign_out', { site }); await saveProfile(row, true); }
+            await profiles.forget(owner, actorId, site);
+            return { sites: await profiles.sites(owner, actorId) };
+        });
     }
 
     async function logAction(row, id, cmd, actor, result, code) {
@@ -362,6 +404,11 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
                 continue;
             }
             if (!lease) { await store.update(db, row.id, { state: 'placing', machine: null, desk: null, trust: null, offer_id: null, reasons: [], updated_at: now() }); continue; }
+            if (row.actor_id) {
+                const current = await store.get(db, row.id);
+                try { await profileCommand(current, 'profile_import', { profile: await profiles.read(row.owner, row.actor_id) }); }
+                catch (e) { await desks.end(h.machine_id, desk, bare(row.owner)); return finish(current, 'unplaceable', 'Saved sign-ins could not be opened on this computer.', { release: false }); }
+            }
             return db.tx(async (t) => {
                 const saved = await store.update(t, row.id, { state: 'running', started_at: now(), last_used_at: now(), lease_checked_at: now(), updated_at: now() });
                 await emit(t, saved, 'run.session.started');
@@ -380,8 +427,10 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
                     if (now() - row.updated_at < STARTING_STALE_MS) continue;
                     const lease = row.machine && row.desk ? await desks.get(row.machine, row.desk, bare(row.owner)).catch(() => undefined) : null;
                     if (lease === undefined) continue;
-                    if (lease) await db.tx(async (t) => { const s = await store.update(t, row.id, { state: 'running', started_at: row.started_at || now(), last_used_at: now(), lease_checked_at: now(), updated_at: now() }); await emit(t, s, 'run.session.started'); });
-                    else await store.update(db, row.id, { state: 'placing', machine: null, desk: null, trust: null, offer_id: null, reasons: [], updated_at: now() });
+                    if (lease) {
+                        if (row.actor_id) await profileCommand(row, 'profile_import', { profile: await profiles.read(row.owner, row.actor_id) });
+                        await db.tx(async (t) => { const s = await store.update(t, row.id, { state: 'running', started_at: row.started_at || now(), last_used_at: now(), lease_checked_at: now(), updated_at: now() }); await emit(t, s, 'run.session.started'); });
+                    } else await store.update(db, row.id, { state: 'placing', machine: null, desk: null, trust: null, offer_id: null, reasons: [], updated_at: now() });
                     continue;
                 }
                 // running
@@ -391,7 +440,10 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
                 if (now() - (row.lease_checked_at || 0) >= leaseCheckMs) {
                     const lease = await desks.get(row.machine, row.desk, bare(row.owner)).catch(() => undefined);
                     if (lease === null) { await finish(row, 'host_lost', 'its machine no longer holds the desk', { release: false }); continue; }
-                    if (lease) await store.update(db, row.id, { lease_checked_at: now() });
+                    if (lease) {
+                        if (row.actor_id) await saveProfile(row).catch(() => log.warn('[Run] saved sign-ins could not be refreshed'));
+                        await store.update(db, row.id, { lease_checked_at: now() });
+                    }
                 }
                 await db.tx(async (t) => {
                     const fresh = await store.get(t, row.id);
@@ -412,7 +464,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
     }
 
     return {
-        create, act, finish, still, setCurtain, requestControl, grantControl, takeControl, controlLease, timeline, isGuest, snapshot, tick, SessionError,
+        create, act, finish, profileSites, signOut, saveProfile, still, setCurtain, requestControl, grantControl, takeControl, controlLease, timeline, isGuest, snapshot, tick, SessionError,
         get: (id) => store.get(db, id),
         list: (owner, opts) => store.listOf(db, owner, opts),
         present: (row) => store.present(row, now()),

@@ -16,6 +16,7 @@
 const { createAccountData, TOPICS } = require('openvibe-sdk/account-data');
 
 const TABLES = [
+    { table: 'run_actor_profiles', subject: 'owner', value: usr => `user:${usr}`, file: 'saved-sites.json', columns: ['actor_id', 'updated_at'], erase: 'delete' },
     {
         table: 'run_sessions', subject: 'owner', value: (usr) => `user:${usr}`, file: 'sessions.json', order: 'created_at',
         columns: ['id', 'via', 'kind', 'state', 'width', 'height', 'ttl_s', 'idle_s', 'machine_asked', 'requirements', 'machine', 'created_at', 'started_at', 'last_used_at', 'ended_at', 'end_reason', 'end_detail', 'metered_minutes', 'updated_at'],
