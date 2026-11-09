@@ -156,6 +156,13 @@ function fakeDesks() {
         assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...agent, body: { kind: 'browser', value: { action: 'read' } } })).status, 423, 'page text stays withheld until resume');
         assert.strictEqual((await t.call('POST', `/api/v1/fill-requests/${pending.json.request_id}/grant`, { ...dock, body: { request_id: pending.json.request_id, envelope: 'T1ZMSwAAAAAAAAA=' } })).status, 404, 'a request cannot be reused');
         await new Promise((resolve) => setTimeout(resolve, 5100));
+        const declinedRequest = await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://example.org' } });
+        assert.strictEqual(declinedRequest.status, 201, declinedRequest.text);
+        const declined = await t.call('POST', `/api/v1/fill-requests/${declinedRequest.json.request_id}/decline`, dock);
+        assert.strictEqual(declined.json.reason, 'refused');
+        await new Promise((resolve) => setTimeout(resolve, 5100));
+        const cooldown = await t.call('POST', `/api/v1/sessions/${ses.id}/fill-requests`, { ...agent, body: { origin: 'https://example.org' } });
+        assert.deepStrictEqual([cooldown.status, cooldown.json.code], [429, 'run.fill.cooldown']);
         assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...as(ada), body: { kind: 'screen', value: {} } })).status, 403, 'owner must take back before sending input');
         lease = (await t.call('POST', `/api/v1/sessions/${ses.id}/control/take`, as(ada))).json.lease;
         assert.deepStrictEqual(lease.holder, { kind: 'person', subject: ada });
@@ -208,6 +215,11 @@ function fakeDesks() {
         await sessions.tick();
         const s = (await t.call('GET', `/api/v1/sessions/${r.json.id}`, as(bea))).json;
         assert.deepStrictEqual([s.state, s.placement.machine, s.placement.trust], ['running', SHARED, 'community']);
+        await t.call('POST', `/api/v1/sessions/${s.id}/control/grant`, { ...as(bea), body: { holder: { kind: 'ai', subject: 'svc:actor' } } });
+        const agent = { token: t.network.signService({ sub: 'svc:actor', cap: ['run.session.control'] }), headers: { 'X-OV-Subject': bea } };
+        const communityFill = await t.call('POST', `/api/v1/sessions/${s.id}/fill-requests`, { ...agent, body: { origin: 'https://example.org' } });
+        assert.deepStrictEqual([communityFill.status, communityFill.json.code], [403, 'run.fill.machine_forbidden']);
+        await t.call('POST', `/api/v1/sessions/${s.id}/control/take`, as(bea));
         desks.state.busy.delete(OPENVIBE);
         await t.call('POST', `/api/v1/sessions/${s.id}/end`, as(bea));
         const named = await t.call('POST', '/api/v1/sessions', { ...as(bea), body: { kind: 'browser', machine: 'dev_01J8Z4M2Q0R7T9YV3K6N8P1W2Z' } });
