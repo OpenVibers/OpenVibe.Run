@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use OpenVibe.Run in research or a product, cite it as below."
+title: openvibe-run
+type: software
+authors:
+  - name: OpenVibe
+    alias: OpenVibers
+    website: https://openvibe.network
+repository-code: https://github.com/OpenVibers/OpenVibe.Run
+url: https://openvibe.run
+license: AGPL-3.0-only
+abstract: "Isolated job execution on worker nodes, followed frame by frame and metered, at openvibe.run."
+keywords:
+  - openvibe
+  - containers
+  - distributed-systems
+  - execution
+  - job-queue

@@ -3,6 +3,9 @@
 The job service of the network (openvibe.run). Design: OpenVibe.Contracts docs/adr/ADR-034-platform-north-star.md;
 plan track T14.
 
+**Live site:** https://openvibe.run · **API docs:** https://openvibe.services · **For AI:** https://openvibe.run/llms.txt
+**Run it:** `npm ci && npm run dev` (Node 22 or newer) · **Tests:** `npm test`
+
 ## Purpose
 
 OpenVibe.Run accepts jobs, places each one on a node that advertises the runtime class it needs, and follows it to
