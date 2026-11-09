@@ -153,6 +153,7 @@ function fakeDesks() {
         assert.strictEqual(grantFill.json.outcome, 'ok', grantFill.text);
         assert.ok(!/username|password|secret|code/i.test(JSON.stringify([pending.json, requests.json, grantFill.json])), 'no response contains credential contents');
         assert.strictEqual((await t.call('GET', `/api/v1/sessions/${ses.id}/still`, as(ada))).status, 423, 'captures remain withheld after completion until resume');
+        assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...agent, body: { kind: 'browser', value: { action: 'read' } } })).status, 423, 'page text stays withheld until resume');
         assert.strictEqual((await t.call('POST', `/api/v1/fill-requests/${pending.json.request_id}/grant`, { ...dock, body: { request_id: pending.json.request_id, envelope: 'T1ZMSwAAAAAAAAA=' } })).status, 404, 'a request cannot be reused');
         await new Promise((resolve) => setTimeout(resolve, 5100));
         assert.strictEqual((await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...as(ada), body: { kind: 'screen', value: {} } })).status, 403, 'owner must take back before sending input');
