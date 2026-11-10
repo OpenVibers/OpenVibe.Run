@@ -149,30 +149,49 @@ const { job } = await run.jobs.submit({
 });
 for await (const ev of run.jobs.events(job.id)) console.log(ev.type, ev.data);   // state changes and output, until it ends`;
 
+/**
+ * The home's picture: a job on a paired computer. The node it runs on (a name, "your node, online"), the job's own
+ * output arriving line by line, how far it is, and the two things Run measures (time so far; metered per second).
+ * Plain markup and CSS: the lines arrive and the bar fills once, and everything is simply in place under reduced
+ * motion. The node, the command and the numbers are an example, and the caption says so.
+ */
+const SCENE_CSS = '<style>'
+    + '.run-scene{width:min(100%,400px);margin:0 auto}'
+    + '.run-scene-card{border:1px solid var(--border,#1f2d47);border-radius:18px;overflow:hidden;background:linear-gradient(var(--bg-card,#131c2e),var(--bg-card,#131c2e)),var(--bg-primary,#0a0f1c);box-shadow:0 14px 34px rgba(0,0,0,.3)}'
+    + '.run-scene-node{display:flex;align-items:center;gap:9px;margin:0;padding:12px 14px;border-bottom:1px solid var(--border,#1f2d47);font-size:.9rem;color:var(--text-secondary,#96a7c2)}'
+    + '.run-scene-node i{flex:none;width:9px;height:9px;border-radius:50%;background:var(--success,#22c55e);box-shadow:0 0 0 4px color-mix(in srgb,var(--success,#22c55e) 22%,transparent)}'
+    + '.run-scene-node b{color:var(--text-primary,#e6edf7)}'
+    + '.run-scene-out{margin:0;padding:12px 14px 10px;display:grid;gap:3px;font:500 .84rem/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text-secondary,#96a7c2);white-space:pre-wrap;overflow-wrap:anywhere;background:color-mix(in srgb,var(--bg-primary,#0a0f1c) 60%,transparent)}'
+    + '.run-scene-out span{animation:runSceneLine var(--ov-dur-3,.32s) var(--ov-ease-out,ease-out) both}'
+    + '.run-scene-out span:nth-child(2){animation-delay:.5s}.run-scene-out span:nth-child(3){animation-delay:.9s}.run-scene-out span:nth-child(4){animation-delay:1.3s}'
+    + '.run-scene-cmd{color:var(--text-primary,#e6edf7)}.run-scene-now{color:var(--accent-light,#60a5fa)}'
+    + '.run-scene-bar{height:6px;margin:0 14px;border-radius:999px;background:color-mix(in srgb,var(--text-muted,#7386a3) 22%,transparent);overflow:hidden}'
+    + '.run-scene-bar i{display:block;width:34%;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent,#3b82f6),var(--accent-light,#60a5fa));transform-origin:left center;animation:runSceneFill 1.2s var(--ov-ease-out,ease-out) 1.3s both}'
+    + '.run-scene-meter{display:flex;justify-content:space-between;gap:10px;margin:0;padding:10px 14px 12px;font-size:.86rem;color:var(--text-secondary,#96a7c2)}'
+    + '.run-scene-meter b{color:var(--text-primary,#e6edf7);font-variant-numeric:tabular-nums}'
+    + '.run-scene figcaption{margin-top:10px;text-align:center;color:var(--text-muted,#7386a3);font-size:.8rem}'
+    + '@keyframes runSceneLine{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}'
+    + '@keyframes runSceneFill{from{transform:scaleX(.9)}to{transform:none}}'
+    + '@media (prefers-reduced-motion:reduce){.run-scene-out span,.run-scene-bar i{animation:none}}'
+    + 'html[data-ov-motion=reduced] .run-scene-out span,html[data-ov-motion=reduced] .run-scene-bar i{animation:none}'
+    + '</style>';
+function runScene() {
+    return '<figure class="run-scene" aria-label="An example: a job running on a paired computer">'
+        + '<div class="run-scene-card">'
+        + '<p class="run-scene-node"><i aria-hidden="true"></i><b>attic-pc</b><span>your node, online</span></p>'
+        + '<pre class="run-scene-out"><span class="run-scene-cmd">$ render --scene city.blend</span>\n<span>frame 039 of 120</span>\n<span>frame 040 of 120</span>\n<span class="run-scene-now">frame 041 of 120</span></pre>'
+        + '<div class="run-scene-bar" role="img" aria-label="34 percent done"><i></i></div>'
+        + '<p class="run-scene-meter"><span><b>0:41</b> so far</span><span>metered <b>per second</b></span></p>'
+        + '</div><figcaption>An example: a job on a paired computer, its output streamed back as it runs.</figcaption></figure>';
+}
+
 function body() {
     return showcase.hero({
         eyebrow: 'OpenVibe.Run · part of OpenVibe Services · alpha',
         title: 'Run jobs on your own machine,',
-        // The hero's picture is this site's own (2026-11-01): it drew the generic aura, the same on six homes.
-        // How a job runs, around the node: pair, submit, sandbox, stream, meter.
-        orbit: {
-            label: 'How a job runs',
-            center: { title: 'Your node', sub: 'runs the job' },
-            inner: [
-                { icon: 'ov:plug', label: 'Pair', href: 'https://openvibe.link/machines' },
-                { icon: 'ov:code', label: 'Submit', href: '#api' },
-                { icon: 'ov:shield', label: 'Sandbox', href: '#how' },
-                { icon: 'ov:history', label: 'Stream', href: '#how' },
-                { icon: 'ov:gauge', label: 'Meter', href: '#how' },
-            ],
-            outer: [
-                { icon: 'ov:codes', label: 'Codes', href: 'https://openvibe.codes/' },
-                { icon: 'ov:bot', label: 'Bot', href: 'https://openvibe.bot/' },
-                { icon: 'ov:services', label: 'Services', href: 'https://openvibe.services/' },
-                { icon: 'ov:ai', label: 'AI', href: 'https://ai.openvibe.services/' },
-                { icon: 'ov:network', label: 'Network', href: 'https://openvibe.network/' },
-            ],
-        },
+        // The hero's picture is what Run does, drawn (2026-11-10; the owner: no more "generic circled" homes): a job
+        // running on a paired computer, its output arriving line by line, and the meter. An example, and it says so.
+        aside: { html: SCENE_CSS + runScene() },
         accent: 'or on a node that can.',
         lede: 'Pair a computer once and the jobs you start run there, on your hardware, with their output streamed back to you. '
             + 'Or send a job to one API with your project\'s token: Run picks a node that offers the runtime it asks for and meters it per second.',
