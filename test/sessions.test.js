@@ -41,6 +41,7 @@ function fakeDesks() {
         async get(machine, desk) { calls.push(['get', machine, desk]); return leases.get(`${machine} ${desk}`) || null; },
         async act(machine, desk, subject, cmd) {
             calls.push(['act', machine, desk, subject, cmd]);
+            if (cmd.id === 'not-delivered') return { machine_id: machine, desk, id: cmd.id, result: 'refused', delivery: 'not_delivered', retry: { safe: true } };
             if (!leases.has(`${machine} ${desk}`)) return null;
             if (cmd.value && cmd.value.action === 'active_origin') return { machine_id: machine, desk, id: cmd.id, result: 'ack', data: { origin: 'https://example.org' } };
             if (cmd.value && cmd.value.action === 'blind_fill') return { machine_id: machine, desk, id: cmd.id, result: 'ack', data: { outcome: 'ok' } };
@@ -112,7 +113,9 @@ function fakeDesks() {
     await check('commands reach its desk; anyone else\'s call is 404', async () => {
         const r = await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...as(ada), body: { id: 'c1', kind: 'browser', value: { action: 'open', url: 'https://example.org/' } } });
         assert.strictEqual(r.status, 200, r.text);
-        valid(r.json, 'run.session-control-result@1');
+        const { delivery, retry, ...releasedShape } = r.json;
+        valid(releasedShape, 'run.session-control-result@1'); // pinned Contracts predates the additive fields
+        assert.deepStrictEqual([delivery, retry.safe], ['delivered', false]);
         assert.deepStrictEqual([r.json.result, r.json.state, r.json.data.title], ['ack', 'running', 'Example']);
         const act = desks.calls.filter((c) => c[0] === 'act').at(-1);
         assert.deepStrictEqual([act[1], act[2], act[4].kind], [OPENVIBE, ses.placement.desk, 'browser']);
@@ -131,6 +134,8 @@ function fakeDesks() {
         assert.strictEqual(timeline.json.actions[0].action, 'open');
         assert.ok(!JSON.stringify(timeline.json).includes('https://example.org'), 'timeline omits command values and URLs');
         assert.strictEqual((await t.call('GET', `/api/v1/sessions/${ses.id}/timeline`, as(bea))).status, 404);
+        const refused = await t.call('POST', `/api/v1/sessions/${ses.id}/commands`, { ...as(ada), body: { id: 'not-delivered', kind: 'browser', value: { action: 'read' } } });
+        assert.deepStrictEqual([refused.json.delivery, refused.json.retry.safe], ['not_delivered', true]);
     });
 
     await check('the B3 control lease hands off to an agent, refuses the former holder, and owner take-back wins', async () => {

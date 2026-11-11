@@ -256,7 +256,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         const r = await desks.act(row.machine, row.desk, bare(row.owner), { id, kind: cmd.kind, value: cmd.value });
         if (r === null) {
             const ended = await finish(row, 'host_lost', 'its machine no longer holds the desk', { release: false });
-            return { session_id: row.id, id, result: 'refused', code: 'run.session.host_lost', reason: 'the session\'s machine went away', state: ended ? ended.state : 'ended' };
+            return { session_id: row.id, id, result: 'refused', code: 'run.session.host_lost', reason: 'the session\'s machine went away', state: ended ? ended.state : 'ended', delivery: 'not_delivered', retry: { safe: true, reason: 'The machine no longer holds this desk' } };
         }
         const renewed = { ...lease, expires_ms: now() + HOLDER_MS };
         if (renewed.expires_ms !== lease.expires_ms) await store.update(db, row.id, { control_lease: renewed, last_used_at: now(), updated_at: now() });
@@ -265,6 +265,12 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         if (r.code != null) out.code = String(r.code).slice(0, 80);
         if (r.reason != null) out.reason = String(r.reason).slice(0, 1000);
         if (r.data && typeof r.data === 'object' && out.result === 'ack') out.data = r.data;
+        // An older Bot may omit delivery. Never infer that a timeout or refusal is safe to repeat.
+        out.delivery = ['delivered', 'not_delivered', 'uncertain'].includes(r.delivery) ? r.delivery
+            : ['ack', 'nack'].includes(out.result) ? 'delivered' : 'uncertain';
+        out.retry = { safe: out.delivery === 'not_delivered', reason: out.delivery === 'not_delivered'
+            ? 'Bot did not deliver the command' : out.delivery === 'uncertain'
+                ? 'The machine may already have run this command' : 'The machine already answered this command' };
         await logAction(row, out.id, cmd, caller, out.result, out.code || null);
         return out;
     }
