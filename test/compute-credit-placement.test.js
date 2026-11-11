@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const {testDb}=require('./helpers/db');
 const {createBroker}=require('../server/compute/broker');
 (async()=>{
- for(const scenario of ['credit','expired','exhausted','promotion','own','partial credit','promo extras','memory','region','latency','job ceiling']) {
+ for(const scenario of ['credit','expired','expires during job','exhausted','promotion','own','partial credit','promo extras','memory','region','latency','job ceiling']) {
   const t=await testDb(), now=Date.UTC(2026,10,11), created=[];
   const config={compute:{enabled:true,dry_run:false,owner:'alice',inventory:{own:{pool:'p',ram_mb:4096}},
    pools:{p:{kind:'browser',strategy:'cheapest',currency:'USD',providers:['daytona','fly'],min_warm:1,max_machines:2}},providers:{}}};
@@ -15,6 +15,7 @@ const {createBroker}=require('../server/compute/broker');
   }
   if(scenario==='promo extras')config.compute.providers.daytona.extra_hourly='0.1';
   if(scenario==='expired')config.compute.providers.daytona.credit_amount='1';
+  if(scenario==='expires during job'){config.compute.providers.daytona.credit_amount='1';config.compute.providers.daytona.credit_expires=new Date(now+60000).toISOString();}
   if(['memory','region','latency','job ceiling'].includes(scenario)) {
    const requirements={memory:{resources:{memory_mb:5000}},region:{region:'eu'},latency:{max_latency_ms:10},'job ceiling':{max_cost_usd:.001}}[scenario];
    await t.db.query("INSERT INTO run_sessions (id,owner,kind,state,width,height,ttl_s,idle_s,request_digest,created_at,updated_at,compute_pool,requirements) VALUES ('ses_need','user:alice','browser','placing',1280,720,900,60,'need',$1,$1,'p',$2)",[now-60000,JSON.stringify(requirements)]);

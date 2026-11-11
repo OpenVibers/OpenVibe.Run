@@ -196,7 +196,7 @@ function createBroker({db,config,desks,now=Date.now,fetchImpl=globalThis.fetch,a
      const creditAvailable={};
      for(const q of qs) {
       const pc=cfg.providers[q.provider] || {};
-      if(!pc.managed || !(Date.parse(pc.credit_expires)>now()))continue;
+      if(!pc.managed || !(Date.parse(pc.credit_expires)>now()+Math.min(3600000,Math.max(60000,p.max_runtime_ms || 3600000))+300000))continue;
       const spent=BigInt(await db.value('SELECT COALESCE(SUM(c.amount_micros),0) FROM run_compute_charges c JOIN run_compute_rentals r ON r.id=c.rental WHERE r.provider=$1',[q.provider]));
       const held=(await live()).filter(r=>r.provider===q.provider).reduce((n,r)=>n+BigInt(r.reserved_micros),0n);
       creditAvailable[q.provider]=micros(pc.credit_amount)-spent-held;
