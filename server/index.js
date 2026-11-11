@@ -38,6 +38,7 @@ async function main() {
     const accountData = accountDataLib.create({ db, log: console });
     const accountSend = config.oauth.clientSecret ? createNetworkSender({ networkInternalUrl: config.network.internalUrl, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret }) : null;
     const app = createApp({ config, db, valkey, registry, accountData, accountSend });
+    await app.locals.initComputeSettings();
     const { keys, outbox, stream, tickets, dispatch, indexnow, sessions, broker } = app.locals;
     keys.start();
     const ticketKey = tickets.start();

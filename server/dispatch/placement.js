@@ -251,19 +251,36 @@ function createPlacement({ config, db = null, fetchImpl = globalThis.fetch, now 
         const req = { ...requirements, capabilities: [...new Set([...(requirements.capabilities || []), want])] };
         contracts.assertValid('platform.workload-requirements@1', req);
         let computeDecision = null;
+        const rentals = db ? await db.many("SELECT * FROM run_compute_rentals WHERE state <> 'released'") : [];
         if (db) {
-            const draining = new Set((await db.many("SELECT machine FROM run_compute_rentals WHERE state IN ('draining','releasing','uncertain')")).map(r => r.machine));
+            const draining = new Set(rentals.filter(r => ['draining','releasing','uncertain'].includes(r.state)).map(r => r.machine));
             candidates = candidates.filter(o => !draining.has(o.node_id));
         }
+        // A sandbox enrolled under the operator's Bot identity is still third-party compute.
+        // Apply provider scope and trust before the planner's privacy checks, even for ordinary jobs.
+        candidates = candidates.flatMap(o => {
+            const rental = rentals.find(r => r.machine === o.node_id);
+            const pc = rental && config.compute?.providers[rental.provider];
+            if (!pc?.managed) return [o];
+            if (rental.pool !== config.compute.job_pool || !pc.enabled || !pc.allowed_kinds.includes(row.class)
+                || (pc.promotion_expires && !(Date.parse(pc.promotion_expires) > now()))) return [];
+            return [{ ...o, trust: 'partner', owner: undefined }];
+        });
         const poolId = config.compute && config.compute.job_pool;
         const pool = poolId && config.compute.pools[poolId];
         if (pool) {
             const saved = db && await db.maybe('SELECT strategy FROM run_compute_pools WHERE id=$1', [poolId]);
             const hard = plan(req, candidates, { now: now() });
             const eligible = new Set(hard.candidates.filter(c => c.eligible).map(c => c.id));
-            const ms = candidates.filter(o => eligible.has(o.offer_id)).map(o => {
-                const v = config.compute.inventory[o.node_id] || {};
-                return { ...v, id: o.offer_id, owner: o.owner, tier: o.trust === 'user-owned' ? 'own' : o.trust === 'community' ? 'community' : o.trust === 'first-party' ? (v.tier || 'dedicated') : 'partner',
+            const ms = candidates.filter(o => eligible.has(o.offer_id)).filter(o => {
+                const rental = rentals.find(r => r.machine === o.node_id);
+                const pc = rental && config.compute.providers[rental.provider];
+                return !pc?.managed || (pc.enabled && pc.allowed_kinds.includes(row.class) && (!pc.promotion_expires || Date.parse(pc.promotion_expires) > now()));
+            }).map(o => {
+                const rental = rentals.find(r => r.machine === o.node_id);
+                const quote = rental ? (typeof rental.quote === 'string' ? JSON.parse(rental.quote) : rental.quote) : {};
+                const v = { ...(config.compute.inventory[o.node_id] || {}), ...(rental ? { tier: quote.tier || 'partner', hourly: Number(rental.hourly_micros)/1e6, currency:rental.currency, gpu_mb:quote.gpu_mb } : {}) };
+                return { ...v, id: o.offer_id, owner: o.owner, tier: rental ? (quote.tier || 'partner') : o.trust === 'user-owned' ? 'own' : o.trust === 'community' ? 'community' : o.trust === 'first-party' ? (v.tier || 'dedicated') : 'partner',
                     health: o.health.status, region: o.region, currency: v.currency || 'USD', hourly: v.hourly ?? (o.trust === 'user-owned' ? 0 : null),
                     free_ram_mb: o.capacity?.memory?.available_mb ?? v.free_ram_mb ?? 0,
                     free_slots: o.capacity?.workers?.[row.class] ?? v.free_slots ?? 0,

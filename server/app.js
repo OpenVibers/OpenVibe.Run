@@ -77,6 +77,13 @@ function createApp(opts = {}) {
     const release = require('openvibe-shared/release').createRelease({ service: 'run', root: path.join(__dirname, '..') });
 
     const app = express();
+    const settingsRouter = express.Router();
+    app.use('/internal/config', express.json({limit:'128kb'}));
+    app.use(settingsRouter);
+    let settingsPromise;
+    app.locals.initComputeSettings = () => settingsPromise ||= require('./compute/settings')
+        .createSettings({db,config,keys,broker,env:opts.env || process.env,log})
+        .then(settings => { settings.mount(settingsRouter); return settings; });
     // GET /openapi.json (SEO-3): this service's public API as OpenAPI 3.1, generated from the contracts
     // (openvibe-contracts); the operations they mark internal-only are left out.
     app.get('/openapi.json', (_req, res) => {

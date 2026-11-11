@@ -5,7 +5,8 @@ const obj=v=>typeof v==='string'?JSON.parse(v):v;
 const bare=v=>String(v || '').replace(/^user:/,'');
 function createBroker({db,config,desks,now=Date.now,fetchImpl=globalThis.fetch,adapters,log=console}) {
  const cfg=config.compute || {pools:{},inventory:{},providers:{},operators:[],dry_run:true};
- const providers=adapters || createProviders({fetch:fetchImpl,config:cfg.providers,now});
+ const {createSandboxProviders,createPriceReader}=require('./sandbox-providers');
+ const providers=adapters || {...createProviders({fetch:fetchImpl,config:cfg.providers,now}),...createSandboxProviders({config:cfg,fetchImpl,now,prices:createPriceReader({fetchImpl,now})})};
  let timer=null,running=null,finish=null,finishJobs=null;
  const month=()=>new Date(now()).toISOString().slice(0,7);
  const journal=(event,detail={},r={})=>db.query('INSERT INTO run_compute_journal (at,event,rental,pool,detail) VALUES ($1,$2,$3,$4,$5)',[now(),event,r.id || null,r.pool || null,JSON.stringify(detail)]);
@@ -64,6 +65,7 @@ function createBroker({db,config,desks,now=Date.now,fetchImpl=globalThis.fetch,a
   if(q.provisionable===false || !pc.image || !pc.costs_bounded || pc.extra_hourly==null) return {reason:'quote only: prepared image and bounded disk/egress costs required'};
   if(q.currency!==pc.currency || q.expires_at<now() || !Number.isFinite(q.hourly) || q.hourly<=0) return {reason:'invalid or expired quote'};
   const p=await poolConfig(pool);
+  if(pc.managed && (!pc.enabled || !pc.allowed_kinds.includes(p.kind || 'browser') || (pc.promotion_expires && !(Date.parse(pc.promotion_expires)>now())))) return {reason:'provider disabled, kind refused or promotion expired'};
   const hourly=BigInt(Math.ceil(q.hourly*1e6))+micros(pc.extra_hourly);
   if(p.max_hourly!=null && hourly>micros(p.max_hourly)) return {reason:'total price exceeds pool ceiling'};
   const runtime=Math.min(3600000,Math.max(60000,p.max_runtime_ms || 3600000));
@@ -79,11 +81,13 @@ function createBroker({db,config,desks,now=Date.now,fetchImpl=globalThis.fetch,a
    if(poolRows.length >= (p.max_machines ?? 10)) return {reason:'pool machine limit reached'};
    const rows=await t.many("SELECT * FROM run_compute_rentals WHERE provider=$1 AND (month=$2 OR state <> 'released')",[q.provider,month()]);
    if(rows.some(r=>['uncertain','releasing'].includes(r.state))) return {reason:'an unresolved provider call blocks new rentals'};
+   if(pc.managed && rows.filter(r=>r.state!=='released').length>=pc.max_concurrent) return {reason:'provider concurrency limit reached'};
    const settled=await t.value('SELECT COALESCE(SUM(c.amount_micros),0) FROM run_compute_charges c JOIN run_compute_rentals r ON r.id=c.rental WHERE r.provider=$1 AND c.month=$2',[q.provider,month()]);
    const committed=BigInt(settled)+rows.filter(r=>r.state!=='released').reduce((sum,r)=>sum+BigInt(r.reserved_micros),0n);
    if(committed+reserved>cap) return {reason:'monthly cap reached'};
    const r={id:'ov-'+randomUUID(),pool,provider:q.provider,month:month(),currency:q.currency,created_at:now(),deadline:now()+runtime,quote:q};
    await t.query("INSERT INTO run_compute_rentals (id,pool,provider,state,month,currency,hourly_micros,reserved_micros,quote,created_at,deadline) VALUES ($1,$2,$3,'provisioning',$4,$5,$6,$7,$8,$9,$10)",[r.id,pool,r.provider,r.month,r.currency,hourly.toString(),reserved.toString(),JSON.stringify(q),r.created_at,r.deadline]);
+   if((committed+reserved)*100n>=cap*80n) await t.query('INSERT INTO run_compute_journal (at,event,rental,pool,detail) VALUES ($1,$2,$3,$4,$5)',[now(),'budget.near_cap',r.id,pool,JSON.stringify({provider:q.provider,cap:pc.monthly_cap,committed_micros:(committed+reserved).toString()})]);
    await t.query('INSERT INTO run_compute_journal (at,event,rental,pool,detail) VALUES ($1,$2,$3,$4,$5)',[now(),'provision.reserved',r.id,pool,JSON.stringify({reserved_micros:reserved.toString(),hourly_micros:hourly.toString(),quote:q.id})]);
    return {rental:r};
   });
@@ -93,7 +97,7 @@ function createBroker({db,config,desks,now=Date.now,fetchImpl=globalThis.fetch,a
   const result=await reserve(pool,q); if(!result.rental) return result;
   const r=result.rental;
   try {
-   const remote=await providers[q.provider].provision(q,{label:r.id,image:cfg.providers[q.provider].image});
+   const remote=await providers[q.provider].provision(q,{label:r.id,image:cfg.providers[q.provider].image,runtime_ms:r.deadline-now()});
    if(!remote?.id) throw new Error('no remote id');
    await db.query("UPDATE run_compute_rentals SET remote_id=$2,state='starting' WHERE id=$1",[r.id,String(remote.id)]);
    await journal('provision.accepted',{remote_id:String(remote.id)},r);
@@ -144,7 +148,7 @@ function createBroker({db,config,desks,now=Date.now,fetchImpl=globalThis.fetch,a
    const committed=rentals.filter(x=>x.provider===r.provider).reduce((sum,x)=>sum+BigInt(x.reserved_micros),settled);
    let unhealthy=false;
    if(r.remote_id) { try { const h=await providers[r.provider].health(r.remote_id); unhealthy=h.deleted || ['error','stopped','off','dead'].includes(String(h.state).toLowerCase()); } catch { /* unknown health keeps the reservation and deadline */ } }
-   const stop=!cfg.enabled || now()>=Number(r.deadline) || committed>micros(pc.monthly_cap || '0') || unhealthy;
+   const stop=!cfg.enabled || (pc.managed && (!pc.enabled || (pc.promotion_expires && now()>=Date.parse(pc.promotion_expires)))) || now()>=Number(r.deadline) || committed>micros(pc.monthly_cap || '0') || unhealthy;
    if(stop && r.remote_id) {
     await db.query("UPDATE run_compute_rentals SET state='draining' WHERE id=$1",[r.id]);
     if(r.machine && finish) for(const s of await db.many("SELECT id FROM run_sessions WHERE machine=$1 AND state <> 'ended'",[r.machine])) await finish(s.id);
@@ -178,7 +182,10 @@ function createBroker({db,config,desks,now=Date.now,fetchImpl=globalThis.fetch,a
      if(m.sessions>0 && r.idle_since!=null) await db.query('UPDATE run_compute_rentals SET idle_since=NULL WHERE id=$1',[r.id]);
     } else ms.push({id:r.id,state:'provisioning',health:'starting',sessions:null});
    }
-   const waiting=await db.many("SELECT created_at,compute_strategy FROM run_sessions WHERE compute_pool=$1 AND state='placing' AND machine_asked IS NULL AND (compute_strategy IS NULL OR compute_strategy <> 'own') ORDER BY created_at",[id]);
+   const waiting=await db.many("SELECT created_at,compute_strategy,requirements FROM run_sessions WHERE compute_pool=$1 AND state='placing' AND machine_asked IS NULL AND (compute_strategy IS NULL OR compute_strategy <> 'own') ORDER BY created_at",[id]);
+   if(cfg.job_pool===id) waiting.push(...await db.many("SELECT created_at,job->'requirements' AS requirements FROM run_jobs WHERE state='queued' AND class=$1 AND job->>'node' IS NULL AND COALESCE(job->'requirements'->>'objective','') NOT IN ('private','first-party-only')",[p.kind]));
+   waiting.sort((a,b)=>Number(a.created_at)-Number(b.created_at));
+   const need=obj(waiting[0]?.requirements) || {};
    const desired=scale(p,ms,waiting.map(s=>({created_at:Number(s.created_at)})),{now:now()});
    for(const a of desired.actions) {
     const r=rows.find(r=>r.machine===a.id || r.id===a.id);
@@ -186,14 +193,41 @@ function createBroker({db,config,desks,now=Date.now,fetchImpl=globalThis.fetch,a
     if(a.action==='release' && r && !cfg.dry_run) await release(r);
     if(a.action==='provision') {
      const qs=(await quotes(id)).flatMap(x=>x.quotes).filter(q=>q.provisionable!==false && q.hourly!=null && q.currency===(p.currency || 'USD') && q.ram_mb>=((p.kind==='desktop'?2048:300)+1024));
+     const creditAvailable={};
+     for(const q of qs) {
+      const pc=cfg.providers[q.provider] || {};
+      if(!pc.managed || !(Date.parse(pc.credit_expires)>now()))continue;
+      const spent=BigInt(await db.value('SELECT COALESCE(SUM(c.amount_micros),0) FROM run_compute_charges c JOIN run_compute_rentals r ON r.id=c.rental WHERE r.provider=$1',[q.provider]));
+      const held=(await live()).filter(r=>r.provider===q.provider).reduce((n,r)=>n+BigInt(r.reserved_micros),0n);
+      creditAvailable[q.provider]=micros(pc.credit_amount)-spent-held;
+     }
      let candidates=qs.flatMap(q=>{
       const pc=cfg.providers[q.provider] || {};
+      if(pc.managed && (!pc.enabled || !pc.allowed_kinds.includes(p.kind || 'browser') || (pc.promotion_expires && !(Date.parse(pc.promotion_expires)>now()))))return [];
       if(!cfg.dry_run && (!pc.key || micros(pc.monthly_cap || '0')===0n || !pc.image || !pc.costs_bounded || pc.extra_hourly==null))return [];
+      const resources=need.resources || {};
+      const trust=pc.managed?'partner':q.tier==='dedicated'?'first-party':q.tier==='community'?'community':'partner';
+      if((need.trust && !need.trust.includes(trust)) || (resources.gpu && !(q.gpu_mb>0))
+          || (resources.cpu && !(q.cpu>=resources.cpu)) || (resources.memory_mb && !(q.ram_mb-1024>=resources.memory_mb))
+          || (resources.scratch_gb && !(q.disk_gb>=resources.scratch_gb))
+          || (need.residency && q.region!==need.residency)
+          || (need.region && need.region!=='nearest' && q.region!==need.region)
+          || (need.max_latency_ms!=null && !(q.latency_ms<=need.max_latency_ms)))return [];
       const extra=pc.extra_hourly==null?0:Number(micros(pc.extra_hourly))/1e6;
-      return [{...q,hourly:q.hourly+extra,id:q.provider+':'+q.id,health:'up',free_ram_mb:q.ram_mb-1024,free_slots:p.slots_per_machine || 1}];
+      const duration=Math.min(3600000,Math.max(60000,p.max_runtime_ms || 3600000))+300000;
+      const estimate=charge(BigInt(Math.ceil((q.hourly+extra)*1e6)),duration,q.billing_seconds)+micros(q.setup || 0);
+      if(need.max_cost_usd!=null && estimate>micros(need.max_cost_usd))return [];
+      const promotion=pc.promotion_expires && Date.parse(pc.promotion_expires)>now()+duration && Date.parse(q.promotion_expires)>now()+duration;
+      // A free CPU promotion does not waive disk/network or setup charges. Apply confirmed
+      // remaining credit to the complete bounded job cost, including a partially covered job.
+      const cash=promotion?charge(micros(pc.extra_hourly || '0'),duration,q.billing_seconds)+micros(q.setup || 0):estimate;
+      const credit=creditAvailable[q.provider]>0n?creditAvailable[q.provider]:0n;
+      const net=cash-(credit>cash?cash:credit);
+      const ranked=pc.managed?Number(net)/1e6*3600000/duration:q.hourly+extra;
+      return [{...q,hourly:ranked,id:q.provider+':'+q.id,health:'up',free_ram_mb:q.ram_mb-1024,free_slots:p.slots_per_machine || 1}];
      });
      while(true) {
-      const d=choose({kind:p.kind,strategy:waiting[0]?.compute_strategy || p.strategy,region:p.region,gpu_mb:p.gpu_mb},candidates,p,{now:now()});
+      const d=choose({kind:p.kind,strategy:waiting[0]?.compute_strategy || ({private:'private','first-party-only':'private','lowest-latency':'fastest',cheapest:'cheapest'}[need.objective]) || p.strategy,region:p.region,gpu_mb:p.gpu_mb},candidates,p,{now:now()});
       const q=qs.find(q=>q.provider+':'+q.id===d.selected);
       if(!q){await journal('scale.decision',{reason:a.reason,decision:d,result:{reason:'no eligible rental quote'}},{pool:id});break;}
       const result=await provision(id,q);
@@ -216,7 +250,7 @@ function createBroker({db,config,desks,now=Date.now,fetchImpl=globalThis.fetch,a
    const settled=BigInt(await db.value('SELECT COALESCE(SUM(c.amount_micros),0) FROM run_compute_charges c JOIN run_compute_rentals r ON r.id=c.rental WHERE r.provider=$1 AND c.month=$2',[provider,month()]));
    let spent=settled,committed=settled,hourly=0n;
    for(const r of rs.filter(r=>r.state!=='released')){const h=BigInt(r.hourly_micros);spent+=charge(h,now()-Math.max(Number(r.created_at),Date.parse(month()+'-01T00:00:00Z')),obj(r.quote).billing_seconds);committed+=BigInt(r.reserved_micros);hourly+=h;}
-   budgets.push({provider,currency:pc.currency,cap:pc.monthly_cap,configured:Boolean(pc.key),spent_micros:spent.toString(),committed_micros:committed.toString(),hourly_micros:hourly.toString()});
+   budgets.push({near_cap:micros(pc.monthly_cap || '0')>0n && committed*100n>=micros(pc.monthly_cap)*80n,provider,currency:pc.currency,cap:pc.monthly_cap,configured:Boolean(pc.key),spent_micros:spent.toString(),committed_micros:committed.toString(),hourly_micros:hourly.toString()});
   }
   let machines=[];
   if(cfg.owner && desks.enabled) {try {machines=await inventory(await desks.hosts(cfg.owner),cfg.owner);} catch {machines=Object.entries(cfg.inventory).map(([id,v])=>({...v,id,health:'unknown'}));}}

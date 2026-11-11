@@ -20,7 +20,7 @@ const B = 'usr_01JZ0000000000000000000BBB';
     const d = await testDb();
     try {
         const accountData = create({ db: d.db });
-        const missing = await uncovered(d.db, { tables: [...TABLES, 'run_jobs'], exempt: { account_data_events: 'the ledger of requests itself: which export and deletion Run applied' } });
+        const missing = await uncovered(d.db, { tables: [...TABLES, 'run_jobs'], exempt: { config_snapshots: 'Owner configuration revision audit; service settings and encrypted credentials are retained independently of the operator account', account_data_events: 'the ledger of requests itself: which export and deletion Run applied' } });
         assert.deepStrictEqual(missing, [], `a table with a person column is neither covered nor exempted: ${missing.join(', ')}`);
 
         for (const [subject, name, jobId] of [[A, 'ada', 'job_01JZ0000000000000000000ADA'], [B, 'bo', 'job_01JZ0000000000000000000BQB']]) {
