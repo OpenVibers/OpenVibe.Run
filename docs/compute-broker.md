@@ -96,3 +96,42 @@ Checks: `npm test -- compute sessions dispatch`; the full suite is `OV_ALLOW_SUI
 The SDK dependency is pinned to the reviewed job commit until its PR is merged and released;
 replace that pin with the resulting SDK release before shipping. Do not deploy this PR before
 Opus reviews money, worker enrollment, privacy and cancellation behavior.
+
+## Owner-managed sandboxes (ask 356)
+
+Network `/admin#ai` → platform settings → **OpenVibe.Run** exposes `run.compute` and
+`run.compute_baseten`, `run.compute_daytona`, `run.compute_e2b`, `run.compute_fly`.
+Only Network's owner-ranked admin proxy can use `run.config.manage`. Keys are write-only,
+sealed by shared/config; Run refuses a secret PUT without `OV_CONFIG_KEKS`. The owner supplies
+keys later; this release supplies none. Changing settings activates them without restart.
+
+Start with `run.compute.enabled=false`, `dry_run=true`. Add a pool with `kind`, `providers`,
+`strategy: "cheapest"`, `currency: "USD"`, a region, `max_machines`, `max_runtime_ms` and
+`slots_per_machine`. Set `owner` to the subject owning the enrolled machines. Set `job_pool`
+for queued agent jobs using their actual runtime class (`code`, `linux`, or `function`); set measured RAM per worker for that image. Browser sessions select the pool through their existing request query.
+The four providers each default off, zero concurrency, zero cap and no allowed kinds.
+
+For each provider set `price_id` from https://openvibe.exchange/compute, matching `region`,
+prepared `image` (E2B template / Daytona snapshot), key, `allowed_kinds`, `max_concurrent`,
+positive USD `monthly_cap`, bounded `extra_hourly`, and `costs_bounded`. Fly additionally needs
+an existing app in `project`; Baseten can use `project` to select its team. Images/templates
+must have exactly the selected quote's resource shape and enroll fresh identities through the
+existing Link/worker path; E2B uses `provider-default` as its region marker because this API has no region selector; it cannot satisfy a named-region purchase. Its template CPU/RAM are checked against the quote before creation. The adapter does not create
+accounts, apps, templates or reusable enrollment credentials. Keep `min_warm: 0` unless warm
+capacity is intentional. The global enabled/dry switches must also be changed for provisioning.
+
+The Exchange catalogue supplies dated public tariffs; its explicit expiry is enforced, and an
+unavailable catalogue yields no new purchases. CPU adapters reject GPU requests; existing
+RunPod/Vast and AI GPU routing remain the GPU path. Baseten/Daytona/E2B send native lifetime
+limits; Fly relies on Run's durable deadline and delete reconciliation. A stopped resource is
+not treated as deleted. Do not revoke a key while rentals still need cleanup.
+
+Set `credit_amount` to a confirmed one-time grant and `credit_expires` to its actual UTC expiry.
+Recorded charges and outstanding reservations reduce that grant across months; credits only
+change ranking, never the gross hard cap. Untracked external use of the same grant is not
+observable: use a dedicated account/budget, or set the credit to zero. A promotional free rate
+requires both the owner expiry and Exchange's advertised expiry to cover the full reservation;
+otherwise the ordinary price wins. At `promotion_expires`, rentals drain and no new ones start.
+At 80% of committed cap, Run writes `budget.near_cap` and displays an alert in `/api/v1/compute`.
+Network also shows these figures and warnings in the owner-only Worker compute budgets section of `/admin#ai`, through `/api/admin/ai/config/compute/status`. The Run view admits the configured machine owner as well as existing operators. Unknown provider
+outcomes keep reservations, block retries and remain visible for operator resolution.

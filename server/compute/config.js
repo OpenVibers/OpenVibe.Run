@@ -10,7 +10,7 @@ function loadCompute(env) {
     }
     for (const [id,p] of Object.entries(pools)) {
         if (!/^[a-z0-9-]{1,40}$/.test(id) || !STRATEGIES.includes(p.strategy || 'automatic')) throw new Error('invalid compute pool');
-        if (p.kind && !['browser','desktop'].includes(p.kind)) throw new Error('invalid pool kind');
+        if (p.kind && !['function','code','browser','linux','desktop','gpu'].includes(p.kind)) throw new Error('invalid pool kind');
     }
     const providers={};
     for (const name of ['hetzner','ovh','vast','runpod']) {
