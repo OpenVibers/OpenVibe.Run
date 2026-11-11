@@ -118,6 +118,7 @@ function loadConfig(env = process.env) {
         // Run sessions (contracts 0.223.0, server/sessions/): one pass over the open ones every tickMs; a person holds at
         // most maxOpen at once; a running one's lease is checked on Bot every leaseCheckMs.
         sessions: {
+            originsEnabled: env.RUN_SESSION_ORIGINS_ENABLED === '1',
             tickMs: Math.max(200, int(env.RUN_SESSION_TICK_MS, 2000)),
             maxOpen: Math.max(1, int(env.RUN_SESSIONS_PER_PERSON, 3)),
             leaseCheckMs: Math.max(1000, int(env.RUN_SESSION_LEASE_CHECK_MS, 30000)),

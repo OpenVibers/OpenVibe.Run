@@ -24,6 +24,7 @@
  */
 const contracts = require('openvibe-contracts');
 const store = require('./store');
+const { parseOrigins } = require('./origins');
 const curtain = require('./curtain');
 const usage = require('../jobs/usage');
 const { TABLE: EVENTS_TABLE, ACTOR } = require('../events/outbox');
@@ -103,7 +104,12 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         if (strategy && !require('openvibe-sdk/compute').STRATEGIES.includes(strategy)) throw new SessionError(422, 'run.compute.strategy', 'unknown compute strategy');
         if (strategy && !pool) throw new SessionError(422, 'run.compute.pool', 'a strategy requires a compute pool');
         if (pool) { if (!broker) throw new SessionError(503, 'run.compute.off'); await broker.poolConfig(pool); }
-        const v = contracts.validate('run.session-create-request@1', body);
+        if (Object.hasOwn(body, 'origins') && !cfg.originsEnabled) throw new SessionError(403, 'run.session.origins_disabled', 'Task origin boundaries are not enabled here yet.');
+        let taskOrigins;
+        try { taskOrigins = parseOrigins(body.origins); }
+        catch (e) { throw new SessionError(422, 'run.session.invalid', e.message); }
+        const { origins: _boundary, ...contractBody } = body;
+        const v = contracts.validate('run.session-create-request@1', contractBody);
         if (!v.valid) throw new SessionError(422, 'run.session.invalid', `invalid session request: ${(v.errors && v.errors[0] && v.errors[0].message) || 'bad value'}`.slice(0, 300));
         const digest = store.digestOf({ ...body, compute_pool: pool, compute_strategy: strategy, template, actor_id: actorId });
         if (body.idempotency_key) {
@@ -120,7 +126,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
             id, owner, via: via || null, kind: 'browser', state: 'placing',
             width: body.width || 1280, height: body.height || 800, ttl_s: body.ttl_s || 3600, idle_s: body.idle_s || 900,
             compute_pool: pool, compute_strategy: strategy, compute_decision: null, template, actor_id: actorId, machine_asked: body.machine || null, requirements: body.requirements || null, idempotency_key: body.idempotency_key || null,
-            request_digest: digest, reasons: [], task_id: body.task_id || null, curtain: false,
+            request_digest: digest, reasons: [], task_id: body.task_id || null, curtain: false, task_origins: taskOrigins,
             control_lease: { thing: `run.session:${id}`, holder: { kind: 'person', subject: bare(owner) }, since_ms: at, expires_ms: at + 60_000, watchers: [], seq: 1 },
             created_at: at, updated_at: at,
         };
@@ -238,6 +244,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         const v = contracts.validate('run.session-control-request@1', cmd);
         if (!v.valid) throw new SessionError(422, 'run.session.invalid', `invalid command: ${(v.errors && v.errors[0] && v.errors[0].message) || 'bad value'}`.slice(0, 300));
         if (cmd.kind === 'browser' && ['active_origin', 'blind_fill'].includes(cmd.value && cmd.value.action)) throw new SessionError(403, 'run.fill.internal_action', 'this browser action is available only through the blind sign-in flow');
+        if (cmd.kind === 'browser' && Object.hasOwn(cmd.value, 'origins')) throw new SessionError(422, 'run.session.invalid', 'The task origins were fixed when the session was created.');
         const id = cmd.id || `c-${now().toString(36)}`;
         if (row.state !== 'running') throw new SessionError(409, 'run.session.not_running', row.state === 'ended' ? 'the session has ended' : 'the session\'s desk is not running yet');
         const lease = await controlLease(row);
@@ -455,6 +462,11 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
     }
     function candidates(row, hosts) {
         const live = hosts.filter((h) => h && h.online && Number(h.free) > 0 && typeof h.machine_id === 'string');
+        if (row.task_origins !== null) {
+            if (row.requirements && Array.isArray(row.requirements.trust) && !row.requirements.trust.includes('user-owned')) return [];
+            return live.filter((h) => h.trust === 'user-owned' && !h.shared && (!row.machine_asked || h.machine_id === row.machine_asked))
+                .sort((a, b) => Number(b.free) - Number(a.free));
+        }
         if (row.machine_asked) return live.filter((h) => h.machine_id === row.machine_asked && h.trust === 'user-owned');
         const allowed = row.requirements && Array.isArray(row.requirements.trust) ? row.requirements.trust : DEFAULT_TRUST;
         return live.filter((h) => allowed.includes(h.trust))
@@ -487,7 +499,8 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
             await store.update(db, row.id, { state: 'starting', machine: h.machine_id, desk, trust: h.trust, offer_id: h.shared ? `desk:${h.machine_id}` : null, reasons: [...reasonsOf(row, h), ...(decision ? [...decision.reasons, `estimated ${decision.hourly} ${decision.currency}/hour`] : [])], compute_decision: decision, updated_at: now() });
             let lease;
             try {
-                lease = await desks.lease(h.machine_id, bare(row.owner), { session: row.id, desk, kind: 'browser', width: row.width, height: row.height });
+                lease = await desks.lease(h.machine_id, bare(row.owner), { session: row.id, desk, kind: 'browser', width: row.width, height: row.height,
+                    ...(row.task_origins !== null ? { origins: row.task_origins } : {}) });
             } catch (e) {
                 await store.update(db, row.id, { state: 'placing', machine: null, desk: null, trust: null, offer_id: null, reasons: [], updated_at: now() });
                 hostCache.delete(bare(row.owner));

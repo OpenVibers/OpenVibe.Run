@@ -6,6 +6,10 @@ Notable changes to OpenVibe.Run. The service is unreleased; everything below is 
 
 ### Added
 
+- With `RUN_SESSION_ORIGINS_ENABLED=1`, a browser session may name exact HTTP(S) origins at creation. Run stores the
+  list with the session, places it on a user-owned desk that can enforce the boundary, and sends the same list when
+  leasing that desk. Commands cannot replace the list. The switch is off by default.
+
 - One Computer (plan 2026-11-07, contracts 0.327.0): `run.session@1` carries `task_id` (the OpenVibe.Actor task the
   session is the Computer of, so the session points back at the task) and `curtain` (the privacy screen).
   `GET /api/v1/sessions/{id}/still` answers the desk's newest frame as a small JPEG (at most 640 px wide, cached for a

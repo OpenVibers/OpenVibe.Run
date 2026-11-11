@@ -11,6 +11,7 @@ const http = require('http');
 const contracts = require('openvibe-contracts');
 const { ids } = require('openvibe-contracts');
 const { boot, check, done } = require('./helpers/app');
+const { loadConfig } = require('../server/config');
 
 const OWN = 'dev_01J8Z4M2Q0R7T9YV3K6N8P1W2A';
 const SHARED = 'dev_01J8Z4M2Q0R7T9YV3K6N8P1W2B';
@@ -51,8 +52,9 @@ function fakeDesks() {
 }
 
 (async () => {
+    assert.equal(loadConfig({}).sessions.originsEnabled, false, 'task origins are owner switched and off by default');
     const desks = fakeDesks();
-    const t = await boot({ appOpts: { desks }, env: { RUN_SESSIONS_PER_PERSON: '3', RUN_SESSION_LEASE_CHECK_MS: '1000' } });
+    const t = await boot({ appOpts: { desks }, env: { RUN_SESSIONS_PER_PERSON: '3', RUN_SESSION_LEASE_CHECK_MS: '1000', RUN_SESSION_ORIGINS_ENABLED: '1' } });
     const { sessions } = t.app.locals;
     const ada = ids.newId('user');
     const bea = ids.newId('user');
@@ -79,6 +81,21 @@ function fakeDesks() {
         assert.strictEqual(lease[2], ada, 'Bot is asked as the person');
         const started = (await t.outboxRows('run.session.started')).map((e) => e.payload || e);
         assert.ok(started.some((p) => p.id === ses.id && p.state === 'running'), 'run.session.started');
+    });
+
+    await check('task origins are fixed at creation and use a user-owned desk', async () => {
+        const created = await t.call('POST', '/api/v1/sessions', { ...as(bea), body: { kind: 'browser', origins: ['https://example.org'] } });
+        assert.equal(created.status, 201, created.text);
+        await sessions.tick();
+        const bounded = (await t.call('GET', `/api/v1/sessions/${created.json.id}`, as(bea))).json;
+        assert.equal(bounded.placement.machine, OWN, 'a shared desk cannot enforce origins');
+        const lease = desks.calls.filter((c) => c[0] === 'lease' && c[3].session === bounded.id).at(-1);
+        assert.deepStrictEqual(lease[3].origins, ['https://example.org']);
+        const changed = await t.call('POST', `/api/v1/sessions/${bounded.id}/commands`, { ...as(bea), body: { kind: 'browser', value: { action: 'read', origins: [] } } });
+        assert.equal(changed.status, 422, 'a later command cannot replace the boundary');
+        await sessions.finish(await sessions.get(bounded.id), 'ended', 'test complete');
+        const bad = await t.call('POST', '/api/v1/sessions', { ...as(bea), body: { kind: 'browser', origins: ['https://example.org/path'] } });
+        assert.equal(bad.status, 422);
     });
 
     await check('browser and throwaway presets are accepted; kept profiles and snapshots say plainly when unavailable', async () => {
