@@ -177,7 +177,15 @@ function createApp(opts = {}) {
         res.type('html').send(home.renderUpdates({ config }));
     });
     { const legal = require('openvibe-shared/legal');
-      app.get(legal.PATHS, (req, res, next) => { res.setHeader('Content-Security-Policy', home.HOME_CSP); next(); }, legal.handler({ id: 'run', service: 'run', host: 'openvibe.run', name: home.SITE_NAME, profile: 'hosting' })); }
+      // Shared's legal template starts the navbar without links, so /terms and /privacy showed its fallback
+      // (Home, My Account, Themes) instead of Run's own pages. Add Run's list to that init call.
+      const navLinks = JSON.stringify(home.NAV_LINKS);
+      app.get(legal.PATHS, (req, res, next) => {
+          res.setHeader('Content-Security-Policy', home.HOME_CSP);
+          const send = res.send.bind(res);
+          res.send = (body) => send(String(body).replace('try{OpenVibeNavbar.init({service:', `try{OpenVibeNavbar.init({links:${navLinks},service:`));
+          next();
+      }, legal.handler({ id: 'run', service: 'run', host: 'openvibe.run', name: home.SITE_NAME, profile: 'hosting' })); }
     // The agent layer (openvibe-shared/agent-layer): /.well-known/agent.json, and the Markdown twins of the home
     // and the update log. Mounted after the page routes, so a browser keeps this site's own page (which names the
     // twin) and only a twin request reaches this renderer; before the fallback, so an unknown .md is a 404.
