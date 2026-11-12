@@ -17,6 +17,9 @@ const appIcon = require('openvibe-shared/app-icon');
 const ovServe = require('openvibe-shared/serve');
 
 const SITE_NAME = 'OpenVibe.Run';
+// The site's own places, the same on every page: home's sections, addressed from anywhere (on /updates a bare
+// "#how" went nowhere). The first row is the home itself.
+const NAV_LINKS = [{ label: 'Your machine', href: '/#machine' }, { label: 'How it works', href: '/#how' }, { label: 'API', href: '/#api' }];
 // The questions the catalog answers for Run (openvibe-contracts manifests/services/run.json, kept word for word): shown
 // on the home and given to search engines as FAQPage data.
 const FAQ = ((require('openvibe-contracts/manifests/services/run.json').site || {}).faq || [])
@@ -73,7 +76,7 @@ function renderHome({ config }) {
     const nav = {
         service: 'run',
         apiBase: NETWORK_URL, sessionUrl: '/auth/me', loginUrl: '/auth/login?next={path}', logoutUrl: '/auth/logout?next={url}', silentLogin: '/auth/login?silent=1&next={url}',
-        links: [{ label: 'Your machine', href: '#machine' }, { label: 'How it works', href: '#how' }, { label: 'API', href: '#api' }],
+        links: NAV_LINKS,
         history: { type: 'page', title: SITE_NAME },
     };
     return shell.page({
@@ -98,7 +101,7 @@ const UPDATES_FONT = "<style>:where(body){font-family:var(--ov-font,'Inter',-app
 
 /** /updates: what shipped on this site, the network's shared update log (openvibe-shared/frame updatesBody). */
 function renderUpdates({ config }) {
-    const links = [{ label: 'How it works', href: '/#how' }, { label: 'API', href: '/#api' }];
+    const links = NAV_LINKS;
     return shell.page({
         name: SITE_NAME, service: 'run', lang: 'en',
         title: `What shipped on ${SITE_NAME}`,
@@ -115,7 +118,7 @@ function renderUpdates({ config }) {
 /** The page a browser gets for a path nothing serves: the site's own Frame, one way back, and no clue about what was asked for. */
 function renderNotFound({ config }) {
     const host = String(config.baseUrl).replace(/^https?:\/\//, '').replace(/\/.*$/, '');
-    const links = [{ label: 'How it works', href: '/#how' }, { label: 'API', href: '/#api' }];
+    const links = NAV_LINKS;
     return shell.page({
         name: SITE_NAME, service: 'run', lang: 'en',
         title: `Page not found · ${SITE_NAME}`,
@@ -258,4 +261,4 @@ function body() {
     });
 }
 
-module.exports = { renderHome, renderUpdates, renderNotFound, HOME_CSP, SITE_NAME, DESCRIPTION, FAQ };
+module.exports = { renderHome, renderUpdates, renderNotFound, HOME_CSP, SITE_NAME, DESCRIPTION, FAQ, NAV_LINKS };
