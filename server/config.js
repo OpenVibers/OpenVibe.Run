@@ -156,6 +156,10 @@ function loadConfig(env = process.env) {
             githubApi: trim(env.RUN_CHECKS_GITHUB_API || 'https://api.github.com'),
             githubWeb: trim(env.RUN_CHECKS_GITHUB_WEB || 'https://github.com'),
             tickMs: Math.max(500, int(env.RUN_CHECKS_TICK_MS, 5000)),
+            // The repositories whose checks report live on GitHub (owner/repo, comma-separated, or *). Every other
+            // repository is in quiet shadow: no queued or in-progress check run, and a finished one that did not
+            // succeed shows as neutral, so a shadow check never holds a merge (server/checks/service.js).
+            live: String(env.RUN_CHECKS_LIVE || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
             requestTimeoutMs: Math.max(1000, int(env.RUN_CHECKS_TIMEOUT_MS, 8000)),
         },
 

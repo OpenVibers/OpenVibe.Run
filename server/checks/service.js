@@ -76,6 +76,12 @@ function createChecks({ config, db, jobsStore = null, events = null, now = () =>
     const githubWeb = String(cfg.githubWeb || 'https://github.com').replace(/\/+$/, '');
     const tickMs = Math.max(500, Number(cfg.tickMs) || 5000);
     const enabled = cfg.enabled !== false && Boolean(key);
+    // Quiet shadow (the default for every repository not in RUN_CHECKS_LIVE): see createCheckRun's `completed` and
+    // finishJob. Live repositories report queued → in_progress → completed with the node's own conclusion.
+    const live = new Set((Array.isArray(cfg.live) ? cfg.live : []).map((r) => String(r).toLowerCase()));
+    const isLive = (repo) => live.has('*') || live.has(String(repo || '').toLowerCase());
+    /** What a quiet shadow check shows on GitHub: success and skipped as they are, anything else neutral. */
+    const shadowShown = (conclusion) => (conclusion === 'success' || conclusion === 'skipped' ? conclusion : 'neutral');
     const github = createGitHub({ config, fetchImpl, now, log });
     const tokenCache = new Map();   // installation id → { token, expiresAt }
     let timer = null;
@@ -225,7 +231,7 @@ function createChecks({ config, db, jobsStore = null, events = null, now = () =>
 
     /** Create the missing GitHub check runs for a plan's jobs (queued). A GitHub failure is logged, never fatal. */
     async function ensureCheckRuns(plan, jobs, token) {
-        if (!token) return;
+        if (!token || !isLive(plan.repo)) return;
         for (const job of jobs) {
             if (job.check_run_id || job.state === 'completed') continue;
             try {
@@ -278,7 +284,36 @@ function createChecks({ config, db, jobsStore = null, events = null, now = () =>
      */
     async function finishJob(plan, job, { conclusion, summary, error = null, queueMs = null, runMs = null, startedAt = null, finishedAt = null, nodeId = null }) {
         const at = finishedAt || now();
-        if (job.check_run_id) {
+        const real = CHECK_CONCLUSIONS.has(conclusion) ? conclusion : 'failure';
+        if (!job.check_run_id && !isLive(plan.repo)) {
+            // Quiet shadow: the check run is made once, already complete; a failure shows as neutral, its title
+            // says what the node found, and Actions stays the check that decides.
+            const { token } = await planContext(plan);
+            if (token) {
+                const shown = shadowShown(real);
+                const title = shown === real ? job.display_name : `${job.display_name}: shadow, node said ${real}; Actions decides`;
+                try {
+                    const run = await github.createCheckRun(token, {
+                        owner: plan.owner, repo: plan.repo.split('/')[1], name: `openvibe / ${job.display_name}`,
+                        headSha: plan.sha, detailsUrl: detailsUrlOf(job.run_job_id), externalId: job.id,
+                        completed: {
+                            conclusion: shown, output: { title: title.slice(0, 250), summary: summary || 'Completed' },
+                            startedAt: startedAt ? new Date(startedAt).toISOString() : null, completedAt: new Date(at).toISOString(),
+                        },
+                    });
+                    await store.setCheckRun(db, job.id, run.id, now());
+                    job = { ...job, check_run_id: run.id };
+                } catch (e) {
+                    const bumped = await store.bumpReportError(db, job.id, now());
+                    const errors = Number((bumped && bumped.report_errors) || 0);
+                    if (errors < 5) {
+                        log.warn(`[Run] checks: shadow check run for ${plan.repo} ${job.display_name} was not created (${e.code || e.message}); retrying`);
+                        return false;
+                    }
+                    log.warn(`[Run] checks: giving up on the shadow check run for ${plan.repo} ${job.display_name} (${e.code || e.message})`);
+                }
+            }
+        } else if (job.check_run_id) {
             const { token } = await planContext(plan);
             if (!token) {
                 log.warn(`[Run] checks: no token; ${plan.repo} ${job.display_name} completes without a check run update`);
@@ -369,8 +404,9 @@ function createChecks({ config, db, jobsStore = null, events = null, now = () =>
         const plan = await store.getPlan(db, planId);
         if (!plan || plan.state !== 'active') return { queued: 0, skipped: 0 };
         let jobs = await store.getJobs(db, planId);
-        // A check run whose creation failed at planning is retried here before the job is queued.
-        if (jobs.some((j) => !j.check_run_id && j.state !== 'completed')) {
+        // A check run whose creation failed at planning is retried here before the job is queued (live repositories;
+        // a quiet shadow one has no check run until it finishes).
+        if (isLive(plan.repo) && jobs.some((j) => !j.check_run_id && j.state !== 'completed')) {
             const { token } = await planContext(plan);
             if (token) {
                 await ensureCheckRuns(plan, jobs, token);
@@ -718,6 +754,7 @@ function createChecks({ config, db, jobsStore = null, events = null, now = () =>
         status: () => ({
             enabled, note: !key ? 'off: RUN_SECRETS_KEY is not set' : cfg.enabled === false ? 'off: RUN_CHECKS=off' : !project ? 'on, but RUN_CHECKS_PROJECT is not set so nothing is planned' : 'on',
             org, owners, tick_ms: tickMs, project_set: Boolean(project), running: Boolean(timer),
+            reporting: live.has('*') ? 'live everywhere' : live.size ? `live: ${[...live].join(', ')}; quiet shadow elsewhere` : 'quiet shadow everywhere',
         }),
         deps: { config, db, github, store, owners, project, enabled },
     };
