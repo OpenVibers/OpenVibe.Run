@@ -149,6 +149,9 @@ function loadConfig(env = process.env) {
             project: String(env.RUN_CHECKS_PROJECT || '').trim(),
             owners: String(env.RUN_CHECKS_OWNERS || 'OpenVibers').split(',').map((s) => s.trim()).filter(Boolean),
             org: env.RUN_CHECKS_ORG || 'OpenVibers',
+            // 'user' or 'organization'; empty asks GitHub once (OpenVibers is a user account: its App is created at
+            // github.com/settings/apps/new while signed in as OpenVibers, not under /organizations/).
+            orgType: String(env.RUN_CHECKS_ORG_TYPE || '').trim().toLowerCase(),
             // The network owner: their subject (RUN_CHECKS_OWNER, else the compute owner) or the Network owner's
             // username (the same OWNER_USERNAME Network's owner guard uses).
             owner: env.RUN_CHECKS_OWNER || env.RUN_COMPUTE_OWNER || '',

@@ -45,6 +45,7 @@ function startGitHubStub() {
 
         if (method === 'POST' && u.pathname === '/app-manifests/code-ok/conversions') return jsonResponse(200, conversion);
         if (method === 'POST' && u.pathname === '/app-manifests/code-bad/conversions') return jsonResponse(500, { message: 'boom' });
+        if (method === 'GET' && u.pathname === '/users/OpenVibers' && stub.ownerType) return jsonResponse(200, { login: 'OpenVibers', type: stub.ownerType });
         if (method === 'GET' && u.pathname === '/app/installations') return jsonResponse(200, [{ id: 42, account: { login: 'OpenVibers', id: 7, type: 'Organization' }, suspended_at: null }]);
         if (method === 'POST' && u.pathname === '/app/installations/42/access_tokens') return jsonResponse(201, { token: 'test-installation-token-not-real', expires_at: new Date(Date.now() + 3600e3).toISOString() });
         if (method === 'GET' && u.pathname === '/repos/OpenVibers/demo/contents/.github/workflows') {
@@ -68,7 +69,8 @@ function startGitHubStub() {
         }
         return jsonResponse(404, { message: `stub has no route for ${method} ${u.pathname}` });
     };
-    return { fetchImpl, calls, checkRuns, files, conversion, setFile: (path, source) => files.set(path, source) };
+    const stub = { fetchImpl, calls, checkRuns, files, conversion, ownerType: null, setFile: (path, source) => files.set(path, source) };
+    return stub;
 }
 
 async function bootChecks(gh, extraEnv = {}) {
@@ -199,7 +201,26 @@ async function main() {
             assert.deepEqual(manifest.default_events, ['push', 'pull_request', 'check_suite', 'workflow_job']);
             assert.equal(manifest.public, false);
             assert.equal(manifest.hook_attributes.url, `${t.config.baseUrl}/webhooks/github`);
+            assert.equal(manifest.setup_url, `${t.config.baseUrl}/admin/checks?installed=1`, 'GitHub returns to Run after installing');
         } finally { await t.close(); }
+    });
+
+    await check('a user account (OpenVibers is one): the App is made at /settings/apps/new, by GitHub\'s answer or by RUN_CHECKS_ORG_TYPE', async () => {
+        const gh = startGitHubStub();
+        gh.ownerType = 'User';
+        const t = await bootChecks(gh);
+        try {
+            const html = await (await fetch(`${t.base}/admin/checks`, { headers: { Cookie: userCookie(t) } })).text();
+            assert.match(html, /action="https:\/\/github\.test\/settings\/apps\/new\?state=/);
+            assert.doesNotMatch(html, /organizations\/OpenVibers\/settings\/apps\/new/);
+        } finally { await t.close(); }
+        const gh2 = startGitHubStub();
+        const t2 = await bootChecks(gh2, { RUN_CHECKS_ORG_TYPE: 'user' });
+        try {
+            const html = await (await fetch(`${t2.base}/admin/checks`, { headers: { Cookie: userCookie(t2) } })).text();
+            assert.match(html, /action="https:\/\/github\.test\/settings\/apps\/new\?state=/, 'the setting decides without asking GitHub');
+            assert.ok(!gh2.calls.some((c) => c.path.startsWith('/users/')), 'no lookup when the type is set');
+        } finally { await t2.close(); }
     });
 
     await check('manifest exchange: state checked, secrets sealed, raw PEM never in a row or the page', async () => {
@@ -217,7 +238,7 @@ async function main() {
                 headers: { Cookie: `${cookie}; ${stateCookie.split(';')[0]}` }, redirect: 'manual',
             });
             assert.equal(created.status, 303);
-            assert.equal(created.headers.get('location'), '/admin/checks?created=1');
+            assert.equal(created.headers.get('location'), 'https://github.test/apps/openvibe-checks/installations/new', 'straight on to installing it');
 
             const row = await t.db.maybe('SELECT * FROM run_checks_app WHERE id = 1');
             assert.equal(Number(row.app_id), APP_ID);

@@ -54,6 +54,8 @@ function manifestFor({ baseUrl } = {}) {
         url: baseUrl,
         hook_attributes: { url: `${baseUrl}/webhooks/github`, active: true },
         redirect_url: `${baseUrl}/admin/checks/created`,
+        // After the App is installed GitHub returns here (11-13: create, install and back in one flow).
+        setup_url: `${baseUrl}/admin/checks?installed=1`,
         public: false,
         default_permissions: {
             checks: 'write', statuses: 'write', contents: 'read', pull_requests: 'read', metadata: 'read', actions: 'read',
@@ -74,6 +76,21 @@ function createChecks({ config, db, jobsStore = null, events = null, now = () =>
     const org = cfg.org || 'OpenVibers';
     const project = PROJECT_RE.test(String(cfg.project || '')) ? String(cfg.project) : null;
     const githubWeb = String(cfg.githubWeb || 'https://github.com').replace(/\/+$/, '');
+    const githubApi = String(cfg.githubApi || 'https://api.github.com').replace(/\/+$/, '');
+    // Is the owner of the repositories a user or an organization? (11-13: OpenVibers is a USER account, and the form
+    // posted to /organizations/OpenVibers/settings/apps/new, which GitHub answers 404.) RUN_CHECKS_ORG_TYPE decides; else
+    // GitHub's public users API, asked once and remembered; a failed answer is not remembered and falls to organization.
+    let orgTypeSeen = cfg.orgType === 'user' || cfg.orgType === 'organization' ? cfg.orgType : null;
+    async function orgType() {
+        if (orgTypeSeen) return orgTypeSeen;
+        try {
+            const r = await fetchImpl(`${githubApi}/users/${encodeURIComponent(org)}`, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'openvibe-run-checks' }, signal: AbortSignal.timeout(5000) });
+            const j = r.ok ? await r.json() : null;
+            const t = j && String(j.type || '').toLowerCase();
+            if (t === 'user' || t === 'organization') orgTypeSeen = t;
+        } catch { /* the default below */ }
+        return orgTypeSeen || 'organization';
+    }
     const tickMs = Math.max(500, Number(cfg.tickMs) || 5000);
     const enabled = cfg.enabled !== false && Boolean(key);
     // Whose job a check is. A person's own machine (a user-owned node such as the owner's home tower) runs only that
@@ -676,7 +693,10 @@ function createChecks({ config, db, jobsStore = null, events = null, now = () =>
                 } catch (e) { log.warn(`[Run] checks: installations could not be read (${e.code || e.message})`); }
             }
             const manifest = manifestFor({ baseUrl: config.baseUrl });
-            const action = `${githubWeb}/organizations/${encodeURIComponent(org)}/settings/apps/new?state=${encodeURIComponent(state)}`;
+            // A user's App is made at /settings/apps/new while signed in as that user; an organization's under /organizations/.
+            const action = (await orgType()) === 'user'
+                ? `${githubWeb}/settings/apps/new?state=${encodeURIComponent(state)}`
+                : `${githubWeb}/organizations/${encodeURIComponent(org)}/settings/apps/new?state=${encodeURIComponent(state)}`;
             const warnings = [];
             if (!key) warnings.push('RUN_SECRETS_KEY is not set: the App cannot be stored.');
             if (!project) warnings.push('RUN_CHECKS_PROJECT is not set: no check is planned until it is.');
@@ -723,7 +743,9 @@ function createChecks({ config, db, jobsStore = null, events = null, now = () =>
             await store.clearTokens(db).catch(() => null);
             await store.clearInstallations(db).catch(() => null);
             tokenCache.clear();
-            res.redirect(303, '/admin/checks?created=1');
+            // Straight on to installing it (one flow: create, install, back to /admin/checks via the manifest's setup_url).
+            const slug = String(converted.slug || '');
+            res.redirect(303, slug ? `${githubWeb}/apps/${encodeURIComponent(slug)}/installations/new` : '/admin/checks?created=1');
         } catch (e) { next(e); }
     });
 
