@@ -285,7 +285,7 @@ async function boot(opts = {}) {
         .filter((e) => (!type || e.event_type === type) && (!jobId || e.payload.job_id === jobId));
 
     return {
-        app, base, call, sse, openStream, submit, request, db: app.locals.db, store, config, clock, network, logs, dir, stream, outbox, tickets, runEvents, dispatch,
+        app, base, call, sse, openStream, submit, request, db: app.locals.db, store, config, clock, network, logs, dir, stream, outbox, tickets, runEvents, dispatch, checks: app.locals.checks,
         // What the stub registry publishes for placement (server/dispatch/placement.js).
         setOffers: (list) => network.setOffers(list),
         outboxRows, streamState: (jobId) => stream.ringOf(jobId),
