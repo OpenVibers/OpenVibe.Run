@@ -353,6 +353,21 @@ async function main() {
         } finally { await t.close(); }
     });
 
+    await check("RUN_CHECKS_OWNER makes each check the owner's own job, so their own machines can run it", async () => {
+        const gh = startGitHubStub();
+        gh.setFile('.github/workflows/ci.yml', CI);
+        const owner = 'usr_01KKT9AC60KM7CRTB3WN1Z8P56';
+        const t = await bootChecks(gh, { RUN_CHECKS_OWNER: owner });
+        try {
+            await seedApp(t, gh);
+            assert.equal((await postWebhook(t, 'push', pushPayload(), { delivery: crypto.randomUUID() })).status, 204);
+            const run = await t.db.maybe('SELECT * FROM run_jobs');
+            assert.equal(run.requester, `user:${owner}`);
+            assert.deepEqual(run.job.requirements.trust, ['first-party', 'user-owned']);
+            assert.match(t.checks.status().runs_as, /checks owner/);
+        } finally { await t.close(); }
+    });
+
     await check('quiet shadow: no check run until a job finishes; a failure shows neutral, the shadow row keeps it', async () => {
         const gh = startGitHubStub();
         gh.setFile('.github/workflows/ci.yml', CI);

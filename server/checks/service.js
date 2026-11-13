@@ -76,6 +76,11 @@ function createChecks({ config, db, jobsStore = null, events = null, now = () =>
     const githubWeb = String(cfg.githubWeb || 'https://github.com').replace(/\/+$/, '');
     const tickMs = Math.max(500, Number(cfg.tickMs) || 5000);
     const enabled = cfg.enabled !== false && Boolean(key);
+    // Whose job a check is. A person's own machine (a user-owned node such as the owner's home tower) runs only that
+    // person's jobs: placement offers it only to their jobs and Bot refuses anyone else's. The checks are the network
+    // owner's own CI, so with RUN_CHECKS_OWNER naming them (usr_…) each check is their job and can run on their
+    // machines; without it a check is the service's and only first-party nodes can take it.
+    const checksRequester = /^usr_[0-9A-HJKMNP-TV-Z]{26}$/.test(String(cfg.owner || '')) ? `user:${cfg.owner}` : 'service:checks';
     // Quiet shadow (the default for every repository not in RUN_CHECKS_LIVE): see createCheckRun's `completed` and
     // finishJob. Live repositories report queued → in_progress → completed with the node's own conclusion.
     const live = new Set((Array.isArray(cfg.live) ? cfg.live : []).map((r) => String(r).toLowerCase()));
@@ -383,7 +388,7 @@ function createChecks({ config, db, jobsStore = null, events = null, now = () =>
         const idempotencyKey = `checks:${claimed.id}:${Number(claimed.attempts) + 1}`;
         try {
             const out = await db.tx(async (t) => {
-                const made = await jobsStore.mint(t, body, { projectId: project, requester: 'service:checks', via: null, idempotencyKey, now: now() });
+                const made = await jobsStore.mint(t, body, { projectId: project, requester: checksRequester, via: null, idempotencyKey, now: now() });
                 if (made.created && events) await events.queued(t, made.row, {});
                 await store.linkRunJob(t, claimed.id, made.row.id, now());
                 return made;
@@ -754,6 +759,7 @@ function createChecks({ config, db, jobsStore = null, events = null, now = () =>
         status: () => ({
             enabled, note: !key ? 'off: RUN_SECRETS_KEY is not set' : cfg.enabled === false ? 'off: RUN_CHECKS=off' : !project ? 'on, but RUN_CHECKS_PROJECT is not set so nothing is planned' : 'on',
             org, owners, tick_ms: tickMs, project_set: Boolean(project), running: Boolean(timer),
+            runs_as: checksRequester === 'service:checks' ? 'service (first-party nodes only)' : "the checks owner (their own machines too)",
             reporting: live.has('*') ? 'live everywhere' : live.size ? `live: ${[...live].join(', ')}; quiet shadow elsewhere` : 'quiet shadow everywhere',
         }),
         deps: { config, db, github, store, owners, project, enabled },
