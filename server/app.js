@@ -63,6 +63,12 @@ function createApp(opts = {}) {
     const membership = opts.membership || createProjectMembership(config, { fetchImpl, now });
     const fillNotifier = opts.fillNotifier || createFillNotifier(config, { fetchImpl, now });
     const apiAuth = createApiAuth({ config, keys, userAuth, membership, log });
+    // The Arena's race (compare-arena-ecosystem.md §3): one parent, one child job per side, the names after
+    // a Bench judgement. A test injects its own bench recorder; production talks to OpenVibe.Bench.
+    const bench = opts.bench || require('./races/bench').createBenchRecorder({ config, fetchImpl, now, log });
+    const races = opts.races || require('./races/service').createRaces({
+        config, db, jobs: require('./jobs/store'), events, stream, bench, now, log,
+    });
     // The checks scheduler (server/checks/): the GitHub App's owner page, the webhook and the agreement
     // query. It owns no module-level state and starts nothing here; server/index.js starts its tick with
     // the other background jobs. Without RUN_SECRETS_KEY the page says so and the webhook answers 503.
@@ -151,6 +157,7 @@ function createApp(opts = {}) {
         apiAuth.middleware,
         require('./compute/routes').computeRouter({ broker, config }),
         sessionsRouter({ sessions }),
+        require('./api/races').racesRouter({ races, apiAuth }),
         v1Router({ config, db, apiAuth, stream, tickets, events, dispatch, now, log }));
 
     // ── The public site (openvibe.run): the front page, the legal pages and the Frame's shared assets. ──
@@ -240,7 +247,7 @@ function createApp(opts = {}) {
         return res.status(500).type('text/plain').send('Something went wrong\n');
     });
 
-    Object.assign(app.locals, { config, db, indexnow, valkey, keys, outbox, events, stream, tickets, dispatch, apiAuth, metrics, desks, sessions, broker, checks });
+    Object.assign(app.locals, { config, db, indexnow, valkey, keys, outbox, events, stream, tickets, dispatch, apiAuth, metrics, desks, sessions, broker, races, bench, checks });
     return app;
 }
 

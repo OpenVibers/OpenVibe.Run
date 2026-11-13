@@ -98,6 +98,9 @@ placed from the Fabric's offers and actually runs — the poller in `server/jobs
   (`GET /api/v1/offers`, public); Run's client `run` mints the events relay's service token, its Bot token and the
   token for project memberships (`GET /internal/projects/:project/members/:subject`, project delegation).
 - OpenVibe.Events: `run.job.*` events go to `events.event.publish`; unset, they wait in `run_events_outbox`.
+- OpenVibe.Bench (`RUN_BENCH_URL`, default `https://bench.openvibe.services`): a race's judgement is recorded as a
+  `bench.match@1` on `POST /api/v1/matches` (`bench.judgement.cast`, audience `openvibe.bench`). Bench has no
+  matchmaker endpoint yet; `matchmaker: true` falls back to `RUN_RACE_ENTRANTS`.
 - OpenVibe.Bot (`RUN_BOT_URL`, `RUN_POLL_MS`): the node link and the meter. Run sends each job to it
   (`bot.job.dispatch`, audience `openvibe.bot`, minted from `OV_OAUTH_CLIENT_ID`/`OV_OAUTH_CLIENT_SECRET` against
   `OV_NETWORK_INTERNAL_URL` and cached until 60 s before expiry) and mirrors its answer. Unset the client secret and
@@ -205,6 +208,39 @@ first-party `svc:` token holding the capability and naming them in `X-OV-Subject
   `requirements`; `node_id`, `provider` and `region` are recorded on Run's row. A class no node offers keeps the job
   queued until an offer appears or its `ttl_ms` ends it `expired` with `run.job.unplaceable`. Offers are cached for `RUN_OFFERS_TTL_MS`; a Network that does not answer
   is retried, never a reason to fail a job.
+
+## Races (the Arena on the one engine)
+
+A race is the Arena's round (compare-arena-ecosystem.md §3): the same prompt, two to four entrants, one child job per
+entrant on the same machine class (`linux`), the same share of the parent budget each, and no entrant named until a
+person judges. The play is data — `agents.play@1`, id `race`, one role per side, one parallel phase, `blind: true`,
+`stop.when: person` — listed by `GET /api/v1/plays`. Contracts 0.422.0 has no `run.race@1`, so the request and answer
+are validated in `server/races/service.js`; the `bench.match@1` the judgement records is validated before it is sent.
+
+| Method and path                   | Capability       | Request → answer |
+|-----------------------------------|------------------|------------------|
+| `GET /api/v1/plays`               | `run.job.list`   | → `{ plays: agents.play@1[] }` |
+| `POST /api/v1/races`              | `run.job.submit` | `{ prompt, kind: chat\|code\|design, entrants: [2–4 bench.entrant ids] \| matchmaker: true, budget: { usd?, wall_ms?, cpu_ms?, mem_bytes? } }` → 201 race |
+| `GET /api/v1/races/:id`           | `run.job.read`   | each side's output so far (the job stream's ring), its state and, once ended, its receipts; names only after a judgement |
+| `POST /api/v1/races/:id/judgement` | `run.job.submit` | `{ winner: a\|b\|tie\|both_bad }` → 201 race with the names revealed |
+
+- **Who may start and judge.** A person, through a first-party service (`X-OV-Subject` + `X-OV-Project`): Run records
+  the person as the requester and the service as `via`. Only that person, through that service and project, may read
+  or judge it; anyone else gets the same `404 run.race_not_found` a missing race does.
+- **The split.** `budget` is the round's total and each side gets `floor(total / sides)` of wall, CPU and memory
+  (memory floored to bytes); `usd` is split and recorded, not metered by Run. A total too small for every side is
+  `422 run.limits.exceeded`; the per-side limits then pass the project caps like any job.
+- **The child.** `class: linux`, `args: { play, role, race, kind, prompt, entrant, budget }`, with
+  `job.parent = { type: 'race', id }` (dropped by `frameOf`, so Bot never receives it). Placement, metering, events
+  and the stream are the ordinary job path.
+- **The judgement.** One `bench.match@1`, source `arena`, the shown order (`a, b, …`, randomised when the race is
+  created), `blind: true`, each ended side's receipts, `play: { id: 'race', run_id }`, and one `human_pairwise`
+  judgement whose `by.id_hash` is an HMAC of the person (`RUN_RACE_HASH_KEY`, falling back to the Network client
+  secret). Bench records it before Run writes the judgement and reveals the names; a Bench that cannot answer leaves
+  the race blind and retryable with the same match id.
+- **The matchmaker.** Bench has no matchmaker endpoint yet (checked 2026-11-13). `matchmaker: true` picks two entrants
+  of different model families at random from `RUN_RACE_ENTRANTS`; unset, it answers `422
+  run.race_matchmaker_unavailable` and names the setting.
 
 ## Tests
 

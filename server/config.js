@@ -160,11 +160,23 @@ function loadConfig(env = process.env) {
         },
 
         // Placement A1: Bench's quality priors, cached an hour, used by place() when the option is a model Bench has
-        // seen. Off in tests unless asked for, so a unit test never reaches the real Bench.
+        // seen. Off in tests unless asked for, so a unit test never reaches the real Bench. The race judgement
+        // records a bench.match@1 on the same host (POST /api/v1/matches, capability bench.judgement.cast).
         bench: {
             url: trim(env.RUN_BENCH_URL || 'https://bench.openvibe.services'),
+            audience: env.RUN_BENCH_AUDIENCE || 'openvibe.bench',
+            timeoutMs: Math.max(100, int(env.RUN_BENCH_TIMEOUT_MS, 8000)),
             priors: env.RUN_BENCH_PRIORS != null ? bool(env.RUN_BENCH_PRIORS) : nodeEnv !== 'test',
             priorsTtlMs: Math.max(0, int(env.RUN_BENCH_PRIORS_TTL_MS, 60 * 60_000)),
+        },
+
+        // The Arena's race (compare-arena-ecosystem.md §3). Bench has no matchmaker endpoint yet, so
+        // `matchmaker: true` picks two entrants of different families from this configured list. `hashKey`
+        // keys the person's id hash in a bench.match@1 judgement: never the person's id, and stable across
+        // restarts (it falls back to Run's Network client secret, which production always has).
+        races: {
+            entrants: String(env.RUN_RACE_ENTRANTS || '').split(',').map((s) => s.trim()).filter(Boolean),
+            hashKey: env.RUN_RACE_HASH_KEY || env.OV_OAUTH_CLIENT_SECRET || 'run-race-development-key',
         },
 
         // The external managed-browser provider (plan T14 R4a, server/dispatch/browser-provider.js): class browser

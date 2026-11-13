@@ -7,11 +7,11 @@
   "runtime": "node 22, express 4, PostgreSQL 18 (openvibe-sdk/db) + Valkey 9",
   "port": 4920,
   "domain": "openvibe.run",
-  "contracts": "openvibe-contracts v0.419.0",
+  "contracts": "openvibe-contracts v0.422.0",
   "sdk": "openvibe-sdk v0.161.0",
   "shared": "openvibe-shared v4.232.0",
   "packages": [
-    "openvibe-contracts v0.419.0",
+    "openvibe-contracts v0.422.0",
     "openvibe-sdk v0.161.0",
     "openvibe-shared v4.232.0"
   ],
@@ -56,7 +56,9 @@
     "plan T14 R4a built, not deployed: the managed-browser provider adapter (server/dispatch/browser-provider.js; RUN_BROWSER_PROVIDER_URL / _API_KEY / _TIMEOUT_MS, off while unset) places class browser jobs on kind=provider offers named browser-provider, validates every answer against browser-provider.job-create-result@1 / job-state@1 and never adopts a malformed one; Run meters those jobs itself, the provider's claimed wall time clamped to Run's observed duration + 5 s, and relays the readings from run_usage_outbox (migrations/0003_usage_outbox.sql) to Billing (RUN_BILLING_URL; unset, they wait and the jobs still run)",
     "truthful readiness (GET /api/ready: db required; valkey, Network JWKS, Events, Bot reachability and the poller's own status reported, never claimed) and the loopback-only /metrics gauges (jobs queued, active, ended, outbox backlog, streams)",
     "plan T11 step 4 built, not deployed: /llms.txt and /llms-full.txt (server/web/discovery.js, public pages and docs only, never the API, admin, a job or a stream) and IndexNow (INDEXNOW_KEY: serves GET /<key>.txt and pings the public pages once at boot; unset, the key route is 404 and nothing is sent)",
-    "a person's own machine (user-owned offer read from Network's internal list) runs only that person's jobs naming user-owned; a delegating service cancels and streams (by ticket) the jobs it started for a person"
+    "a person's own machine (user-owned offer read from Network's internal list) runs only that person's jobs naming user-owned; a delegating service cancels and streams (by ticket) the jobs it started for a person",
+    "the Arena's race on the one engine (compare-arena-ecosystem.md §3, server/races/): POST /api/v1/races starts one child linux job per side under one parent race with the same share of the budget each, GET /api/v1/races/:id returns each side's output so far and its receipts, and POST /api/v1/races/:id/judgement records a bench.match@1 on Bench (source arena, shown order, blind true, human_pairwise with a keyed person hash) before the names are revealed; only the person who started it, through the same service, may read or judge",
+    "the race play as data (agents.play@1 1.1.0, server/plays/race.js): id race, one role per side, one parallel phase, an even budget split, blind true and stop when person, listed by GET /api/v1/plays; the matchmaker falls back to two entrants of different families from RUN_RACE_ENTRANTS while Bench has no matchmaker endpoint (Contracts 0.422.0 has no run.race@1 yet, so the race request/answer is validated in server/races/service.js)"
   ],
   "updated": "2026-11-13"
 }
