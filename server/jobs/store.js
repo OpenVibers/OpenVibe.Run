@@ -156,6 +156,11 @@ async function mint(db, body, { projectId, requester, via = null, idempotencyKey
 /** Project-scoped get: null when the job does not exist or belongs to another project (→ 404, never 403). */
 const get = (db, id, projectId = null) => db.maybe(`SELECT * FROM run_jobs WHERE id = $1${projectId ? ' AND project_id = $2' : ''}`, projectId ? [id, projectId] : [id]);
 
+/** Several jobs by id (a race's child runs); the caller maps them by id, and an absent one is simply not in the result. */
+const getMany = (db, ids) => (ids && ids.length
+    ? db.many('SELECT * FROM run_jobs WHERE id = ANY($1::text[])', [ids])
+    : Promise.resolve([]));
+
 /** A delegated caller's get: the job only if it is this project's, this person's, through this service (else null → 404). */
 const getOwn = (db, id, { projectId, requester, via }) => db.maybe(
     'SELECT * FROM run_jobs WHERE id = $1 AND project_id = $2 AND requester = $3 AND via = $4', [id, projectId, requester, via]);
@@ -349,7 +354,7 @@ function readResult(row) {
 
 module.exports = {
     // The store surface the API and the dispatcher bridge (plan T14 step 6) use.
-    put, mint, get, getOwn, list, adminList, cancel, mirror, settle, toJob, readResult, frameOf,
+    put, mint, get, getMany, getOwn, list, adminList, cancel, mirror, settle, toJob, readResult, frameOf,
     // The poller's reads (waiting → placed → active → ended).
     waiting, active, dueTtl,
 };

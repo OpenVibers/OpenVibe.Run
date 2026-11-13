@@ -109,6 +109,21 @@ function createJobStream({ config, now = () => Date.now(), log = console }) {
         return { ended: false, unsubscribe: () => { ring.subscribers.delete(sub); ring.touched = now(); } };
     }
 
+    /**
+     * What a ring holds right now, without creating one: the output so far, the last state it announced
+     * and whether it closed. A race's GET reads this for each side, so polling the race shows the sides'
+     * answers as they stream (output is best effort, exactly as the stream contract says).
+     */
+    function snapshot(jobId) {
+        const ring = jobs.get(jobId);
+        if (!ring) return { state: null, output: '', ended: false };
+        return {
+            state: ring.state,
+            output: ring.events.filter((e) => e.type === 'output').map((e) => e.chunk).join(''),
+            ended: ring.ended,
+        };
+    }
+
     const canAttach = (jobId) => ringOf(jobId).subscribers.size < maxPerJob;
     const status = () => ({ jobs: jobs.size, streams: [...jobs.values()].reduce((n, r) => n + r.subscribers.size, 0), events: [...jobs.values()].reduce((n, r) => n + r.events.length, 0) });
 
@@ -121,7 +136,7 @@ function createJobStream({ config, now = () => Date.now(), log = console }) {
         }
     }
 
-    return { state, output, seed, subscribe, canAttach, status, close, emit, prune, maxPerJob, ringOf };
+    return { state, output, seed, subscribe, snapshot, canAttach, status, close, emit, prune, maxPerJob, ringOf };
 }
 
 module.exports = { createJobStream, JOB_EVENT_TYPES };

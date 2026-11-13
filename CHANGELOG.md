@@ -6,6 +6,17 @@ Notable changes to OpenVibe.Run. The service is unreleased; everything below is 
 
 ### Added
 
+- The Arena's race on the one engine (compare-arena-ecosystem.md §3, contracts 0.422.0): the `race` play as
+  `agents.play@1` (one role per side, one parallel phase, an even budget split, `blind: true`, stop on person), listed
+  by `GET /api/v1/plays`; `POST /api/v1/races` starts one child `linux` job per side (2–4) under one parent race with
+  the same share of the budget each and answers the sides labelled `a, b, …` without names; `GET /api/v1/races/:id`
+  returns each side's output so far and its receipts when ended, the names only after a judgement;
+  `POST /api/v1/races/:id/judgement` records one `bench.match@1` on Bench (source `arena`, shown order, `blind: true`,
+  the receipts, a `human_pairwise` judgement with an HMAC of the person) before revealing the names. Only the person
+  who started the race, through the same first-party service, may read or judge it. `matchmaker: true` picks two
+  entrants of different model families from `RUN_RACE_ENTRANTS` while Bench has no matchmaker endpoint. Migration
+  0020 adds `run_races`. The race request/answer has no released contract yet, so it is validated in
+  `server/races/service.js`; everything it stores or sends is validated where a contract exists.
 - With `RUN_SESSION_ORIGINS_ENABLED=1`, a browser session may name exact HTTP(S) origins at creation. Run stores the
   list with the session, places it on a user-owned desk that can enforce the boundary, and sends the same list when
   leasing that desk. Commands cannot replace the list. The switch is off by default.
