@@ -35,6 +35,7 @@ const { createDeskClient } = require('./sessions/desks');
 const { createSessions } = require('./sessions/service');
 const { inputError } = require('./util');
 const { createRunReadiness, registerRunGauges } = require('./observability');
+const { createChecks } = require('./checks');
 
 const VERSION = require('../package.json').version;
 // A create request may carry 512 KiB of args (run.job-create-request@1) on top of its inputs and limits,
@@ -62,6 +63,10 @@ function createApp(opts = {}) {
     const membership = opts.membership || createProjectMembership(config, { fetchImpl, now });
     const fillNotifier = opts.fillNotifier || createFillNotifier(config, { fetchImpl, now });
     const apiAuth = createApiAuth({ config, keys, userAuth, membership, log });
+    // The checks scheduler (server/checks/): the GitHub App's owner page, the webhook and the agreement
+    // query. It owns no module-level state and starts nothing here; server/index.js starts its tick with
+    // the other background jobs. Without RUN_SECRETS_KEY the page says so and the webhook answers 503.
+    const checks = opts.checks || createChecks({ config, db, jobsStore: require('./jobs/store'), events, now, fetchImpl, log, userAuth, sso: opts.checksSso || null });
     // Run sessions (contracts 0.223.0): browser desks Bot leases per session; the tick starts in server/index.js.
     const desks = opts.desks || createDeskClient({ config, fetchImpl, now });
     const broker = opts.broker || require('./compute/broker').createBroker({ config, db, desks, now, fetchImpl, log });
@@ -118,6 +123,11 @@ function createApp(opts = {}) {
     app.use(http.middleware());
     app.use(cookieParser());
     app.use('/auth', require('./web-sso').webSso({ config, fetchImpl, log }));
+    // The checks App's owner page and its webhook. The webhook reads the raw bytes GitHub signed, so it
+    // mounts its own body parser here, before /api/v1's JSON parser and the catch-all.
+    app.use('/admin/checks', checks.admin);
+    app.post('/webhooks/github', express.raw({ type: '*/*', limit: '10mb' }), (req, res, next) => Promise.resolve(checks.webhook(req, res)).catch(next));
+    app.get('/api/v1/checks/agreement', (req, res, next) => Promise.resolve(checks.agreement(req, res)).catch(next));
 
     // Liveness: the process answers. What it can and cannot do is /api/ready's job, and the counts are
     // /metrics' and /api/ready's — this route says nothing it cannot back with a value it just read.
@@ -230,7 +240,7 @@ function createApp(opts = {}) {
         return res.status(500).type('text/plain').send('Something went wrong\n');
     });
 
-    Object.assign(app.locals, { config, db, indexnow, valkey, keys, outbox, events, stream, tickets, dispatch, apiAuth, metrics, desks, sessions, broker });
+    Object.assign(app.locals, { config, db, indexnow, valkey, keys, outbox, events, stream, tickets, dispatch, apiAuth, metrics, desks, sessions, broker, checks });
     return app;
 }
 
