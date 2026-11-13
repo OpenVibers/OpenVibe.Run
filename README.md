@@ -128,6 +128,14 @@ refused like any other token without the grant.
 with the grant is refused. Every request body and query string is validated against its released contract, and so is
 every answer before it is sent; errors are RFC 9457 `application/problem+json`.
 
+## Checks
+
+The checks scheduler (`server/checks/`, [docs/checks.md](docs/checks.md)) turns a matching GitHub workflow job into a
+Run `code` job on a node and reports a GitHub check run. The owner creates the App once at `/admin/checks` (the
+manifest flow); GitHub calls `POST /webhooks/github`; `GET /api/v1/checks/agreement?repo=` gives the owner the node vs
+Actions agreement. Its secrets (the App key, webhook secret, client secret and installation tokens) are sealed with
+`RUN_SECRETS_KEY`; `RUN_CHECKS_PROJECT` is the project a check job belongs to.
+
 ## Sessions
 
 A session (contracts 0.223.0, the Desks plan's D6) is a browser desk Run places for one person and OpenVibe.Bot leases

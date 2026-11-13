@@ -138,6 +138,27 @@ function loadConfig(env = process.env) {
             maxPerTick: Math.max(1, int(env.RUN_DISPATCH_MAX_PER_TICK, 200)),
         },
 
+        // The checks scheduler (research-2026-11-13/shared-node-checks.md): the GitHub App made by the manifest
+        // flow, the webhook and the workflow jobs Run plans from it. RUN_SECRETS_KEY seals the App's private key,
+        // webhook secret and installation tokens at rest (server/checks/crypto.js); without it the page and the
+        // webhook stay off. RUN_CHECKS_PROJECT is the project a check job belongs to. RUN_CHECKS=off turns the
+        // scheduler off; the tick only runs when the background jobs are on (RUN_JOBS).
+        checks: {
+            enabled: env.RUN_CHECKS !== 'off',
+            secretsKey: String(env.RUN_SECRETS_KEY || ''),
+            project: String(env.RUN_CHECKS_PROJECT || '').trim(),
+            owners: String(env.RUN_CHECKS_OWNERS || 'OpenVibers').split(',').map((s) => s.trim()).filter(Boolean),
+            org: env.RUN_CHECKS_ORG || 'OpenVibers',
+            // The network owner: their subject (RUN_CHECKS_OWNER, else the compute owner) or the Network owner's
+            // username (the same OWNER_USERNAME Network's owner guard uses).
+            owner: env.RUN_CHECKS_OWNER || env.RUN_COMPUTE_OWNER || '',
+            ownerUsername: env.OWNER_USERNAME || 'goosely',
+            githubApi: trim(env.RUN_CHECKS_GITHUB_API || 'https://api.github.com'),
+            githubWeb: trim(env.RUN_CHECKS_GITHUB_WEB || 'https://github.com'),
+            tickMs: Math.max(500, int(env.RUN_CHECKS_TICK_MS, 5000)),
+            requestTimeoutMs: Math.max(1000, int(env.RUN_CHECKS_TIMEOUT_MS, 8000)),
+        },
+
         // Placement A1: Bench's quality priors, cached an hour, used by place() when the option is a model Bench has
         // seen. Off in tests unless asked for, so a unit test never reaches the real Bench. The race judgement
         // records a bench.match@1 on the same host (POST /api/v1/matches, capability bench.judgement.cast).
