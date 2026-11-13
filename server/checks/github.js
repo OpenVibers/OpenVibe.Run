@@ -109,8 +109,15 @@ function createGitHub({ config, fetchImpl = globalThis.fetch, now = () => Date.n
     }
 
     /** Create a check run (queued) → { id, html_url }. */
-    async function createCheckRun(token, { owner, repo, name, headSha, detailsUrl = null, externalId = null }) {
-        const body = { name, head_sha: headSha, status: 'queued', ...(detailsUrl ? { details_url: detailsUrl } : {}), ...(externalId ? { external_id: externalId } : {}) };
+    async function createCheckRun(token, { owner, repo, name, headSha, detailsUrl = null, externalId = null, completed = null }) {
+        // `completed` ({ conclusion, output, startedAt, completedAt }) creates the run already finished (quiet shadow).
+        const done = completed ? {
+            status: 'completed', conclusion: completed.conclusion,
+            ...(completed.output ? { output: completed.output } : {}),
+            ...(completed.startedAt ? { started_at: completed.startedAt } : {}),
+            ...(completed.completedAt ? { completed_at: completed.completedAt } : {}),
+        } : { status: 'queued' };
+        const body = { name, head_sha: headSha, ...done, ...(detailsUrl ? { details_url: detailsUrl } : {}), ...(externalId ? { external_id: externalId } : {}) };
         const out = await request(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/check-runs`, { method: 'POST', token, body });
         if (!out.json || !out.json.id) throw new GitHubError('checks.github_refused', 'GitHub created no check run');
         return { id: out.json.id, html_url: out.json.html_url || null };

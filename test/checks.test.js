@@ -80,6 +80,8 @@ async function bootChecks(gh, extraEnv = {}) {
             RUN_CHECKS_GITHUB_API: 'https://github.test',
             RUN_CHECKS_GITHUB_WEB: 'https://github.test',
             OWNER_USERNAME: 'goosely',
+            // The demo repository reports live (queued → in_progress → completed); the quiet shadow test clears it.
+            RUN_CHECKS_LIVE: 'OpenVibers/demo',
             ...extraEnv,
         },
         appOpts: { fetchImpl: gh.fetchImpl },
@@ -349,6 +351,81 @@ async function main() {
             const shadow = await t.db.maybe("SELECT * FROM run_checks_shadow WHERE job_name = 'Build'");
             assert.equal(shadow.node_conclusion, 'success');
         } finally { await t.close(); }
+    });
+
+    await check('quiet shadow: no check run until a job finishes; a failure shows neutral, the shadow row keeps it', async () => {
+        const gh = startGitHubStub();
+        gh.setFile('.github/workflows/ci.yml', CI);
+        const t = await bootChecks(gh, { RUN_CHECKS_LIVE: '' });
+        try {
+            await seedApp(t, gh);
+            assert.equal((await postWebhook(t, 'push', pushPayload(), { delivery: crypto.randomUUID() })).status, 204);
+            const posts = () => gh.calls.filter((c) => c.method === 'POST' && c.path === '/repos/OpenVibers/demo/check-runs');
+            const patches = () => gh.calls.filter((c) => c.method === 'PATCH' && c.path.startsWith('/repos/OpenVibers/demo/check-runs/'));
+            assert.equal(await t.db.value('SELECT COUNT(*) FROM run_jobs'), 1, 'the job is still planned and queued');
+            assert.equal(posts().length, 0, 'no queued check run in quiet shadow');
+            assert.match(t.checks.status().reporting, /quiet shadow everywhere/);
+
+            const build = await t.db.maybe("SELECT cj.id AS check_job_id, rj.id AS run_job_id FROM run_checks_jobs cj JOIN run_jobs rj ON rj.id = cj.run_job_id WHERE cj.display_name = 'Build'");
+            await t.db.maybe("UPDATE run_jobs SET state = 'running', started_ms = $2, node_id = 'dev_node_1' WHERE id = $1", [build.run_job_id, Date.now()]);
+            await t.checks.tick();
+            assert.equal(posts().length + patches().length, 0, 'no in-progress check run either');
+            assert.equal(await t.db.value('SELECT check_state FROM run_checks_jobs WHERE id = $1', [build.check_job_id]), 'in_progress');
+
+            await t.db.maybe(
+                "UPDATE run_jobs SET state = 'failed', finished_ms = $2, wall_ms = 900, result = $3::jsonb WHERE id = $1",
+                [build.run_job_id, Date.now(), JSON.stringify({ ok: false, conclusion: 'failure', steps: [{ name: 'npm test', conclusion: 'failure', ms: 800 }], ms: 900 })]);
+            await t.checks.tick();
+            const made = posts();
+            const buildRun = made.find((c) => c.body.name === 'openvibe / Build');
+            assert.ok(buildRun, 'the finished job gets its check run');
+            assert.equal(buildRun.body.status, 'completed');
+            assert.equal(buildRun.body.conclusion, 'neutral', 'a shadow failure never fails the commit');
+            assert.match(buildRun.body.output.title, /node said failure; Actions decides/);
+            assert.ok(buildRun.body.completed_at && buildRun.body.head_sha === SHA);
+            assert.equal(patches().length, 0);
+            const row = await t.db.maybe('SELECT * FROM run_checks_jobs WHERE id = $1', [build.check_job_id]);
+            assert.equal(row.conclusion, 'failure', 'Run keeps the real conclusion');
+            assert.ok(row.check_run_id, 'the check run id is kept');
+            const shadow = await t.db.maybe("SELECT * FROM run_checks_shadow WHERE job_name = 'Build'");
+            assert.equal(shadow.node_conclusion, 'failure');
+
+            // The later stage is skipped because its need failed: shown as skipped, never as pending or failed.
+            const testRun = made.find((c) => c.body.name === 'openvibe / Test');
+            assert.ok(testRun, 'the skipped stage is reported once');
+            assert.equal(testRun.body.status, 'completed');
+            assert.equal(testRun.body.conclusion, 'skipped');
+            assert.equal(made.length, 2);
+        } finally { await t.close(); }
+    });
+
+    await check('quiet shadow: a success shows as success; RUN_CHECKS_LIVE=* reports every repository live', async () => {
+        const gh = startGitHubStub();
+        gh.setFile('.github/workflows/ci.yml', CI);
+        const t = await bootChecks(gh, { RUN_CHECKS_LIVE: '' });
+        try {
+            await seedApp(t, gh);
+            await postWebhook(t, 'push', pushPayload(), { delivery: crypto.randomUUID() });
+            const build = await t.db.maybe("SELECT rj.id AS run_job_id FROM run_checks_jobs cj JOIN run_jobs rj ON rj.id = cj.run_job_id WHERE cj.display_name = 'Build'");
+            await t.db.maybe("UPDATE run_jobs SET state = 'succeeded', started_ms = $2, finished_ms = $3, wall_ms = 500, result = $4::jsonb WHERE id = $1",
+                [build.run_job_id, Date.now() - 1000, Date.now(), JSON.stringify({ ok: true, conclusion: 'success', steps: [{ name: 'ok', conclusion: 'success', ms: 10 }] })]);
+            await t.checks.tick();
+            const made = gh.calls.filter((c) => c.method === 'POST' && c.path === '/repos/OpenVibers/demo/check-runs');
+            assert.equal(made.length, 1);
+            assert.equal(made[0].body.conclusion, 'success');
+            assert.equal(made[0].body.output.title, 'Build');
+        } finally { await t.close(); }
+        const gh2 = startGitHubStub();
+        gh2.setFile('.github/workflows/ci.yml', CI);
+        const t2 = await bootChecks(gh2, { RUN_CHECKS_LIVE: '*' });
+        try {
+            await seedApp(t2, gh2);
+            await postWebhook(t2, 'push', pushPayload(), { delivery: crypto.randomUUID() });
+            const queued = gh2.calls.filter((c) => c.method === 'POST' && c.path === '/repos/OpenVibers/demo/check-runs');
+            assert.equal(queued.length, 2);
+            assert.ok(queued.every((c) => c.body.status === 'queued'));
+            assert.equal(t2.checks.status().reporting, 'live everywhere');
+        } finally { await t2.close(); }
     });
 
     await check('shadow: workflow_job completed records the Actions conclusion; agreement is per repo and owner-only', async () => {
