@@ -64,7 +64,7 @@ echo "hello from job $OPENVIBE_JOB_ID: $args"
 printf '{"ok":true}' >&3
 EOF
 sudo chmod 755 /opt/fn/hello/run
-# Add it to "worker" → "functions" in /etc/openvibe-link/config.json, then: sudo systemctl restart openvibe-link
+# Add it to "functions" under "worker" in /etc/openvibe-link/config.json, then: sudo systemctl restart openvibe-link
 #   {"name": "hello", "version": "1.0.0", "command": ["/opt/fn/hello/run"]}`;
 
 const SUBMIT_EXAMPLE = `curl -X POST https://openvibe.run/api/v1/jobs \\
