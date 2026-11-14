@@ -9,11 +9,11 @@
   "domain": "openvibe.run",
   "contracts": "openvibe-contracts v0.422.0",
   "sdk": "openvibe-sdk v0.168.0",
-  "shared": "openvibe-shared v4.247.0",
+  "shared": "openvibe-shared v4.248.0",
   "packages": [
     "openvibe-contracts v0.422.0",
     "openvibe-sdk v0.168.0",
-    "openvibe-shared v4.247.0"
+    "openvibe-shared v4.248.0"
   ],
   "capabilities": [
     "run.job.submit",
@@ -60,5 +60,5 @@
     "the Arena's race on the one engine (compare-arena-ecosystem.md §3, server/races/): POST /api/v1/races starts one child linux job per side under one parent race with the same share of the budget each, GET /api/v1/races/:id returns each side's output so far and its receipts, and POST /api/v1/races/:id/judgement records a bench.match@1 on Bench (source arena, shown order, blind true, human_pairwise with a keyed person hash) before the names are revealed; only the person who started it, through the same service, may read or judge",
     "the race play as data (agents.play@1 1.1.0, server/plays/race.js): id race, one role per side, one parallel phase, an even budget split, blind true and stop when person, listed by GET /api/v1/plays; the matchmaker falls back to two entrants of different families from RUN_RACE_ENTRANTS while Bench has no matchmaker endpoint (Contracts 0.422.0 has no run.race@1 yet, so the race request/answer is validated in server/races/service.js)"
   ],
-  "updated": "2026-11-13"
+  "updated": "2026-11-14"
 }
