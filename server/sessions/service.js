@@ -33,6 +33,8 @@ const TRUST_ORDER = ['user-owned', 'first-party', 'partner', 'community'];
 const DEFAULT_TRUST = ['first-party', 'community'];
 const STARTING_STALE_MS = 60_000;
 const OPERATION = 'browser.desk';
+// A whole desktop's time (contracts 0.433.0, 2026-11-14) is its own operation: a desktop costs a host about twice a browser.
+const OPERATION_DESKTOP = 'desktop.desk';
 const SOURCE = 'openvibe-run.session';
 // The still (plan 2026-11-07): one frame a second at most, never wider than 640 px. The desk's own capture is
 // reused — the same screen command Actor's computer tools and the agent stream's frames come from — and the answer
@@ -79,7 +81,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         const readings = [];
         const one = (n, quantity) => {
             const key = `run:${row.id}:${n}`;
-            return { id: key, idempotency_key: key, service: usage.SERVICE, operation: OPERATION, unit: 's', quantity,
+            return { id: key, idempotency_key: key, service: usage.SERVICE, operation: row.kind === 'desktop' ? OPERATION_DESKTOP : OPERATION, unit: 's', quantity,
                 at: new Date(row.started_at + n * 60_000).toISOString(), source: SOURCE, subject: row.owner, node: row.machine };
         };
         for (let n = row.metered_minutes || 0; n < whole; n++) readings.push(one(n, 60));
@@ -111,6 +113,11 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         const { origins: _boundary, ...contractBody } = body;
         const v = contracts.validate('run.session-create-request@1', contractBody);
         if (!v.valid) throw new SessionError(422, 'run.session.invalid', `invalid session request: ${(v.errors && v.errors[0] && v.errors[0].message) || 'bad value'}`.slice(0, 300));
+        // A whole desktop (contracts 0.433.0): screen and input only, so no browser profile to keep and no origin list
+        // a browser could hold to.
+        const kind = body.kind === 'desktop' ? 'desktop' : 'browser';
+        if (kind === 'desktop' && template !== 'browser') throw new SessionError(422, 'run.session.template', 'a desktop keeps no browser profile: leave out the template and the Actor');
+        if (kind === 'desktop' && taskOrigins !== null) throw new SessionError(422, 'run.session.invalid', 'a desktop cannot hold a browser origin list');
         const digest = store.digestOf({ ...body, compute_pool: pool, compute_strategy: strategy, template, actor_id: actorId });
         if (body.idempotency_key) {
             const earlier = await db.maybe('SELECT * FROM run_sessions WHERE owner = $1 AND idempotency_key = $2 AND created_at > $3', [owner, body.idempotency_key, now() - 86_400_000]);
@@ -123,7 +130,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         const at = now();
         const id = store.newSessionId();
         const row = {
-            id, owner, via: via || null, kind: 'browser', state: 'placing',
+            id, owner, via: via || null, kind, state: 'placing',
             width: body.width || 1280, height: body.height || 800, ttl_s: body.ttl_s || 3600, idle_s: body.idle_s || 900,
             compute_pool: pool, compute_strategy: strategy, compute_decision: null, template, actor_id: actorId, machine_asked: body.machine || null, requirements: body.requirements || null, idempotency_key: body.idempotency_key || null,
             request_digest: digest, reasons: [], task_id: body.task_id || null, curtain: false, task_origins: taskOrigins,
@@ -245,6 +252,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         if (!v.valid) throw new SessionError(422, 'run.session.invalid', `invalid command: ${(v.errors && v.errors[0] && v.errors[0].message) || 'bad value'}`.slice(0, 300));
         if (cmd.kind === 'browser' && ['active_origin', 'blind_fill'].includes(cmd.value && cmd.value.action)) throw new SessionError(403, 'run.fill.internal_action', 'this browser action is available only through the blind sign-in flow');
         if (cmd.kind === 'browser' && Object.hasOwn(cmd.value, 'origins')) throw new SessionError(422, 'run.session.invalid', 'The task origins were fixed when the session was created.');
+        if (cmd.kind === 'browser' && row.kind === 'desktop') throw new SessionError(422, 'run.session.kind_mismatch', 'a desktop is used with screen and input: its browser is a window on it');
         const id = cmd.id || `c-${now().toString(36)}`;
         if (row.state !== 'running') throw new SessionError(409, 'run.session.not_running', row.state === 'ended' ? 'the session has ended' : 'the session\'s desk is not running yet');
         const lease = await controlLease(row);
@@ -313,6 +321,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
         const origin = exactOrigin(requestedOrigin);
         if (!origin) throw new SessionError(422, 'run.fill.origin', 'origin must be an exact HTTPS origin');
         if (row.state !== 'running' || !row.machine || !row.desk) throw new SessionError(409, 'run.session.not_running', 'the session is not running');
+        if (row.kind === 'desktop') throw new SessionError(422, 'run.session.kind_mismatch', 'a blind sign-in fills a browser session, not a desktop');
         if (!['user-owned', 'first-party'].includes(row.trust)) throw new SessionError(403, 'run.fill.machine_forbidden', 'blind fill is available only on your machine or OpenVibe machines');
         const expiredFill = await db.maybe("UPDATE run_session_fill_requests SET state = 'expired', decision = 'expired', finished_at = $2 WHERE session_id = $1 AND state = 'pending' AND expires_at <= $2 RETURNING id, agent_subject", [row.id, now()]);
         if (expiredFill) setTimeout(async () => { await resumeFill(expiredFill.id, row.id, expiredFill.agent_subject); }, 5000).unref?.();
@@ -452,14 +461,16 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
     }
 
     // ── placement ─────────────────────────────────────────────────────────────────────────────────────────────
-    async function hostsFor(subject) {
-        const c = hostCache.get(subject);
+    async function hostsFor(subject, kind = 'browser') {
+        const key = `${kind}:${subject}`;
+        const c = hostCache.get(key);
         if (c && now() - c.at < 5000) return c.hosts;
-        const hosts = await desks.hosts(subject);
-        hostCache.set(subject, { at: now(), hosts });
+        const hosts = await desks.hosts(subject, kind);
+        hostCache.set(key, { at: now(), hosts });
         if (hostCache.size > 500) hostCache.clear();
         return hosts;
     }
+    const forgetHosts = (subject) => { hostCache.delete(`browser:${subject}`); hostCache.delete(`desktop:${subject}`); };
     function candidates(row, hosts) {
         const live = hosts.filter((h) => h && h.online && Number(h.free) > 0 && typeof h.machine_id === 'string');
         if (row.task_origins !== null) {
@@ -475,14 +486,14 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
     const reasonsOf = (row, h) => [
         row.machine_asked ? 'your own machine, as asked' : h.trust === 'user-owned' ? 'your own machine, with room'
             : h.trust === 'first-party' ? 'an OpenVibe desk host with room' : 'a community desk host with room',
-        `${Number(h.free)} of ${Number(h.max_browser_desks) || Number(h.free)} desks free there`,
+        row.kind === 'desktop' ? `${Number(h.free)} desktop${Number(h.free) === 1 ? '' : 's'} free there` : `${Number(h.free)} of ${Number(h.max_browser_desks) || Number(h.free)} desks free there`,
         ...(h.shared ? ['each desk there runs in its own sandbox'] : []),
     ];
 
     async function place(row) {
         if (now() - row.created_at >= row.ttl_s * 1000) return finish(row, 'unplaceable', 'no machine had room before the session\'s time ran out', { release: false });
         let hosts;
-        try { hosts = await hostsFor(bare(row.owner)); } catch (e) { if (!e.retryable) log.warn(`[Run] session ${row.id}: desk hosts: ${e.code}`); return row; }
+        try { hosts = await hostsFor(bare(row.owner), row.kind); } catch (e) { if (!e.retryable) log.warn(`[Run] session ${row.id}: desk hosts: ${e.code}`); return row; }
         if (broker) hosts = await broker.available(hosts);
         let list = candidates(row, hosts);
         let decision = null;
@@ -491,7 +502,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
             list = decision.selected ? hosts.filter(h => h.machine_id === decision.selected) : [];
         }
         if (!list.length) {
-            if (row.machine_asked && !hosts.some((h) => h.machine_id === row.machine_asked)) return finish(row, 'unplaceable', 'that machine is not open to your agent (or it runs no browser desks)', { release: false });
+            if (row.machine_asked && !hosts.some((h) => h.machine_id === row.machine_asked)) return finish(row, 'unplaceable', `that machine is not open to your agent (or it runs no ${row.kind === 'desktop' ? 'desktops' : 'browser desks'})`, { release: false });
             return row;
         }
         const desk = store.deskOf(row.id);
@@ -499,12 +510,12 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
             await store.update(db, row.id, { state: 'starting', machine: h.machine_id, desk, trust: h.trust, offer_id: h.shared ? `desk:${h.machine_id}` : null, reasons: [...reasonsOf(row, h), ...(decision ? [...decision.reasons, `estimated ${decision.hourly} ${decision.currency}/hour`] : [])], compute_decision: decision, updated_at: now() });
             let lease;
             try {
-                lease = await desks.lease(h.machine_id, bare(row.owner), { session: row.id, desk, kind: 'browser', width: row.width, height: row.height,
+                lease = await desks.lease(h.machine_id, bare(row.owner), { session: row.id, desk, kind: row.kind === 'desktop' ? 'desktop' : 'browser', width: row.width, height: row.height,
                     ...(row.task_origins !== null ? { origins: row.task_origins } : {}) });
             } catch (e) {
                 await store.update(db, row.id, { state: 'placing', machine: null, desk: null, trust: null, offer_id: null, reasons: [], updated_at: now() });
-                hostCache.delete(bare(row.owner));
-                if (e.code === 'bot.machine_busy' || e.code === 'bot.desk_busy' || e.retryable) continue;
+                forgetHosts(bare(row.owner));
+                if (e.code === 'bot.machine_busy' || e.code === 'bot.kind_unavailable' || e.code === 'bot.desk_busy' || e.retryable) continue;
                 if (e.code === 'bot.desk_failed') continue;
                 log.warn(`[Run] session ${row.id}: lease on ${h.machine_id} refused: ${e.code}`);
                 continue;
@@ -591,4 +602,4 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
     };
 }
 
-module.exports = { createSessions, SessionError, OPERATION, SOURCE };
+module.exports = { createSessions, SessionError, OPERATION, OPERATION_DESKTOP, SOURCE };
