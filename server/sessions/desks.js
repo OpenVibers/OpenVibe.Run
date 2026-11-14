@@ -5,7 +5,7 @@
  * machines and their desks; Run asks it, as the session's person (X-OV-Subject), where a desk may go, leases one,
  * acts on it and ends it:
  *
- *   hosts(subject)                              GET    /api/v1/desk-hosts                          → [{ machine_id, trust, … }]
+ *   hosts(subject, kind?)                       GET    /api/v1/desk-hosts[?kind=desktop]           → [{ machine_id, trust, … }]
  *   lease(machine, subject, body)               POST   /api/v1/machines/:id/desk-leases            → bot.desk-lease@1
  *   get(machine, desk, subject)                 GET    /api/v1/machines/:id/desk-leases/:desk      → the lease | null (404)
  *   act(machine, desk, subject, { id, kind, value })  POST …/desk-leases/:desk/commands           → bot.command-result@1 fields
@@ -68,15 +68,17 @@ function createDeskClient({ config, fetchImpl = globalThis.fetch, now = () => Da
     return {
         enabled,
         note,
-        async hosts(subject) {
-            const out = await call('GET', '/api/v1/desk-hosts', subject);
+        async hosts(subject, kind = 'browser') {
+            // A whole desktop's hosts are only those that lend desktops (Bot, contracts 0.433.0).
+            const out = await call('GET', kind === 'desktop' ? '/api/v1/desk-hosts?kind=desktop' : '/api/v1/desk-hosts', subject);
             const hosts = out && Array.isArray(out.hosts) ? out.hosts : [];
             for (const h of hosts) { if (h.shared || h.trust !== 'user-owned') cloud.add(h.machine_id); }
             return hosts;
         },
         async lease(machine, subject, body) {
             // Only canonical Run sessions enter the per-session Link path. Bot remains the validator for other lease requests.
-            if (cloud.has(machine) && /^ses_[0-9A-HJKMNP-TV-Z]{26}$/.test(body.session || '')) {
+            // A desktop has no browser to route through the person's own computer: no egress route for it.
+            if (body.kind !== 'desktop' && cloud.has(machine) && /^ses_[0-9A-HJKMNP-TV-Z]{26}$/.test(body.session || '')) {
                 await egress.prepare(machine, subject, body);
                 assigned.set(`${machine}:${body.desk}`, body.session);
             }

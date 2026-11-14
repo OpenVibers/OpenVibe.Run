@@ -30,11 +30,11 @@ function fakeDesks() {
     };
     return {
         calls, leases, state, enabled: true, note: 'a fake Bot',
-        async hosts(subject) { calls.push(['hosts', subject]); return state.hosts.map((h) => ({ ...h })); },
+        async hosts(subject, kind = 'browser') { calls.push(['hosts', subject, kind]); return (kind === 'desktop' ? state.desktops || [] : state.hosts).map((h) => ({ ...h })); },
         async lease(machine, subject, body) {
             calls.push(['lease', machine, subject, body]);
             if (state.busy.has(machine)) { const e = new Error('busy'); e.code = 'bot.machine_busy'; e.status = 409; throw e; }
-            const lease = { machine_id: machine, desk: body.desk, session: body.session, owner: `user:${subject}`, kind: 'browser', width: body.width, height: body.height, shared: machine !== OWN, created_at: new Date().toISOString() };
+            const lease = { machine_id: machine, desk: body.desk, session: body.session, owner: `user:${subject}`, kind: body.kind || 'browser', width: body.width, height: body.height, shared: machine !== OWN, created_at: new Date().toISOString() };
             leases.set(`${machine} ${body.desk}`, lease);
             return lease;
         },
@@ -345,6 +345,34 @@ function fakeDesks() {
         await t.call('POST', `/api/v1/sessions/${s.id}/end`, as(bea));
         // An ended session has no picture.
         assert.strictEqual((await t.call('GET', `/api/v1/sessions/${s.id}/still`, as(bea))).status, 404);
+    });
+
+    await check('a whole desktop (contracts 0.433.0): only a host that lends desktops, screen and input only, its own metering', async () => {
+        const nobody = await t.call('POST', '/api/v1/sessions', { ...as(bea), body: { kind: 'desktop' } });
+        assert.strictEqual(nobody.status, 201, nobody.text);
+        valid(nobody.json, 'run.session@1');
+        await sessions.tick();
+        assert.strictEqual((await sessions.get(nobody.json.id)).state, 'placing', 'no browser host takes a desktop');
+        assert.ok(desks.calls.some((c) => c[0] === 'hosts' && c[1] === bea && c[2] === 'desktop'), 'Bot is asked for desktop hosts');
+        desks.state.desktops = [{ machine_id: SHARED, trust: 'community', shared: true, online: true, free: 1, kinds: ['desktop'] }];
+        await t.wait(5100);   // the host list is kept five seconds
+        await sessions.tick();
+        const d = (await t.call('GET', `/api/v1/sessions/${nobody.json.id}`, as(bea))).json;
+        valid(d, 'run.session@1');
+        assert.deepStrictEqual([d.kind, d.state, d.placement.machine, d.placement.trust], ['desktop', 'running', SHARED, 'community']);
+        assert.ok(d.placement.reasons.includes('1 desktop free there'), JSON.stringify(d.placement.reasons));
+        const lease = desks.calls.filter((c) => c[0] === 'lease' && c[3].session === d.id).at(-1);
+        assert.strictEqual(lease[3].kind, 'desktop');
+        const cmd = (body) => t.call('POST', `/api/v1/sessions/${d.id}/commands`, { ...as(bea), body });
+        assert.strictEqual((await cmd({ kind: 'screen', value: {} })).status, 200);
+        const b = await cmd({ kind: 'browser', value: { action: 'read' } });
+        assert.deepStrictEqual([b.status, b.json.code], [422, 'run.session.kind_mismatch']);
+        await sessions.finish(await sessions.get(d.id), 'ended', 'test complete');
+        assert.ok((await usageOf(d.id)).every((u) => u.operation === 'desktop.desk'), 'desktop time is its own operation');
+        const kept = await t.call('POST', '/api/v1/sessions?template=kept-browser', { ...as(bea), body: { kind: 'desktop' } });
+        assert.ok([422, 503].includes(kept.status), 'a desktop keeps no browser profile');
+        const bounded = await t.call('POST', '/api/v1/sessions', { ...as(bea), body: { kind: 'desktop', origins: ['https://example.org'] } });
+        assert.strictEqual(bounded.status, 422, 'nor a browser origin list');
     });
 
     await check('the real desk client: Run\'s token for Bot with bot.desk.session, the person in X-OV-Subject', async () => {
