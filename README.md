@@ -301,7 +301,7 @@ until Run has a product surface; the vhost below is installed then.
 <!-- versions:start -->
 - openvibe-contracts: v0.422.0
 - openvibe-sdk: v0.168.0
-- openvibe-shared: v4.249.0
+- openvibe-shared: v4.250.0
 <!-- versions:end -->
 
 Compute placement, pool autoscaling, rental caps and the operator view are documented in
