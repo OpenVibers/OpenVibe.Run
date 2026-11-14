@@ -170,7 +170,7 @@ function loadConfig(env = process.env) {
         // seen. Off in tests unless asked for, so a unit test never reaches the real Bench. The race judgement
         // records a bench.match@1 on the same host (POST /api/v1/matches, capability bench.judgement.cast).
         bench: {
-            url: trim(env.RUN_BENCH_URL || 'https://bench.openvibe.services'),
+            url: trim(env.RUN_BENCH_URL || 'https://openvibe.compare'),
             audience: env.RUN_BENCH_AUDIENCE || 'openvibe.bench',
             timeoutMs: Math.max(100, int(env.RUN_BENCH_TIMEOUT_MS, 8000)),
             priors: env.RUN_BENCH_PRIORS != null ? bool(env.RUN_BENCH_PRIORS) : nodeEnv !== 'test',

@@ -8,7 +8,7 @@
  * The board is public; a Bench that does not answer leaves the map empty rather than delaying the tick for long.
  */
 const { createClient } = require('openvibe-sdk/core');
-const { createBenchClient } = require('openvibe-sdk/bench');
+const { createCompareClient } = require('openvibe-sdk/compare');
 
 const TTL_MS = 60 * 60_000;
 const BENCH_KIND = { code: 'codes.patch', review: 'codes.review' };
@@ -17,7 +17,7 @@ function createPriors({ config = {}, fetchImpl = globalThis.fetch, now = Date.no
     const bench = config.bench || {};
     const enabled = bench.priors !== false && !!bench.url;
     const client = enabled
-        ? createBenchClient(createClient({ baseUrls: { bench: bench.url }, autoDiscover: false, fetch: fetchImpl, timeoutMs: 4000, retries: 0 }), { baseUrl: bench.url })
+        ? createCompareClient(createClient({ baseUrls: { compare: bench.url }, autoDiscover: false, fetch: fetchImpl, timeoutMs: 4000, retries: 0 }), { baseUrl: bench.url })
         : null;
     const cache = new Map();
 

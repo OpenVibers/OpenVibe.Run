@@ -98,7 +98,7 @@ placed from the Fabric's offers and actually runs — the poller in `server/jobs
   (`GET /api/v1/offers`, public); Run's client `run` mints the events relay's service token, its Bot token and the
   token for project memberships (`GET /internal/projects/:project/members/:subject`, project delegation).
 - OpenVibe.Events: `run.job.*` events go to `events.event.publish`; unset, they wait in `run_events_outbox`.
-- OpenVibe.Bench (`RUN_BENCH_URL`, default `https://bench.openvibe.services`): a race's judgement is recorded as a
+- OpenVibe.Bench (`RUN_BENCH_URL`, default `https://openvibe.compare`): a race's judgement is recorded as a
   `bench.match@1` on `POST /api/v1/matches` (`bench.judgement.cast`, audience `openvibe.bench`). Bench has no
   matchmaker endpoint yet; `matchmaker: true` falls back to `RUN_RACE_ENTRANTS`.
 - OpenVibe.Bot (`RUN_BOT_URL`, `RUN_POLL_MS`): the node link and the meter. Run sends each job to it
@@ -300,7 +300,7 @@ until Run has a product surface; the vhost below is installed then.
 
 <!-- versions:start -->
 - openvibe-contracts: v0.422.0
-- openvibe-sdk: v0.167.0
+- openvibe-sdk: v0.168.0
 - openvibe-shared: v4.247.0
 <!-- versions:end -->
 
