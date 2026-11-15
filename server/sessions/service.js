@@ -54,6 +54,7 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
     const maxOpen = cfg.maxOpen || 3;
     let timer = null;
     let running = null;
+    let again = null;
     const hostCache = new Map();   // subject → { at, hosts }
     const stills = new Map();      // session id → { at, bytes, type, width, height } (one second)
     const pending = new Map();     // session id → Promise of the frame being captured
@@ -579,11 +580,17 @@ function createSessions({ config, db, desks, outbox, now = () => Date.now(), log
             }
         }
     }
-    /** One pass at a time: a pass asked for while one runs waits for it. */
+    /** One pass at a time. A pass asked for while one runs gets one more pass after it: the running pass may have
+     *  listed the open sessions before the caller's change (a session created a moment ago would wait a whole interval,
+     *  and a test that ticks right after creating one would see it unplaced). Every caller during a pass shares that
+     *  one follow-up. */
     function tick() {
-        if (running) return running;
-        running = tickOnce().finally(() => { running = null; });
-        return running;
+        if (!running) {
+            running = tickOnce().finally(() => { running = null; });
+            return running;
+        }
+        if (!again) again = running.catch(() => {}).then(() => { again = null; return tick(); });
+        return again;
     }
 
     return {

@@ -241,7 +241,10 @@ function createBroker({db,config,desks,now=Date.now,fetchImpl=globalThis.fetch,a
    }
   }
  }
- function tick(){if(running)return running;running=tickOnce().finally(()=>{running=null;});return running;}
+ // One pass at a time; a pass asked for while one runs gets one follow-up after it (the running pass may have read
+ // the state before the caller's change), shared by every caller during that pass.
+ let again=null;
+ function tick(){if(!running){running=tickOnce().finally(()=>{running=null;});return running;}if(!again)again=running.catch(()=>{}).then(()=>{again=null;return tick();});return again;}
  async function status() {
   const rentals=await db.many('SELECT * FROM run_compute_rentals ORDER BY created_at DESC LIMIT 200');
   const budgets=[];
