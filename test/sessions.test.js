@@ -245,18 +245,25 @@ function fakeDesks() {
 
     await check('a session created while a pass runs is placed by the next tick, not a whole interval later', async () => {
         let open; desks.state.gate = new Promise((ok) => { open = ok; });
-        const first = await t.call('POST', '/api/v1/sessions', { ...as(bea), body: { kind: 'browser' } });
-        const until = Date.now() + 3000;
-        while (!desks.calls.some((c) => c[0] === 'lease' && c[3].session === first.json.id) && Date.now() < until) await new Promise((ok) => setTimeout(ok, 5));
-        assert.ok(Date.now() < until, 'a pass is placing the first');
-        // That pass is now held in the first one's lease, having listed the open sessions before the second existed.
-        const second = await t.call('POST', '/api/v1/sessions', { ...as(bea), body: { kind: 'browser' } });
-        const ticked = sessions.tick();
-        desks.state.gate = null; open();
-        await ticked;
-        const states = await Promise.all([first, second].map(async (r) => (await sessions.get(r.json.id)).state));   // stored: a read would place it
-        assert.deepStrictEqual(states, ['running', 'running'], 'both placed by that tick');
-        await Promise.all([first, second].map((r) => t.call('POST', `/api/v1/sessions/${r.json.id}/end`, as(bea))));
+        try {
+            const first = await t.call('POST', '/api/v1/sessions', { ...as(bea), body: { kind: 'browser' } });
+            // A pass reaches the lease in milliseconds here, but on a loaded CI database (thirty files at once) it once took
+            // over 3 s (11-16, Run #323): wait up to 15 s.
+            const until = Date.now() + 15000;
+            while (!desks.calls.some((c) => c[0] === 'lease' && c[3].session === first.json.id) && Date.now() < until) await new Promise((ok) => setTimeout(ok, 5));
+            assert.ok(Date.now() < until, 'a pass is placing the first');
+            // That pass is now held in the first one's lease, having listed the open sessions before the second existed.
+            const second = await t.call('POST', '/api/v1/sessions', { ...as(bea), body: { kind: 'browser' } });
+            const ticked = sessions.tick();
+            desks.state.gate = null; open();
+            await ticked;
+            const states = await Promise.all([first, second].map(async (r) => (await sessions.get(r.json.id)).state));   // stored: a read would place it
+            assert.deepStrictEqual(states, ['running', 'running'], 'both placed by that tick');
+            await Promise.all([first, second].map((r) => t.call('POST', `/api/v1/sessions/${r.json.id}/end`, as(bea))));
+        } finally {
+            // Never leave the gate shut: every later pass would wait on it and the file would hang until it is killed.
+            desks.state.gate = null; open();
+        }
     });
 
     await check('a full host is skipped; its own machine named and not open ends unplaceable', async () => {
