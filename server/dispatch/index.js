@@ -82,11 +82,23 @@ function createDispatcher({ config = null, db = null, store = null, events = nul
         return { ...out, job_id: row && row.id };
     }
 
+    /**
+     * What the person typed to their running interactive job (2026-11-16: an agent's own sign-in reads the code its page
+     * shows). A job on a node goes through Bot, which checks the person against the job; the managed browser takes none.
+     * → { sent, reason? }
+     */
+    async function stdin(row, { data = '', eof = false } = {}) {
+        if (!enabled || !row || !row.id) return { sent: false, reason: 'dispatch.disabled' };
+        if (row.provider === BROWSER_PROVIDER) return { sent: false, reason: 'run.job_not_interactive' };
+        const out = await botClient.stdin(row.id, { data, eof, subject: row.requester });
+        return { sent: Boolean(out && out.sent) };
+    }
+
     const poll = () => (enabled ? poller.tick() : Promise.resolve([]));
     const sweep = () => (enabled ? poller.sweep() : Promise.resolve([]));
 
     return {
-        enabled, note, place, cancel, poll, sweep,
+        enabled, note, place, cancel, stdin, poll, sweep,
         // Codes C9c: may this job run pinned to that machine now? → { ok, offer? , code?, detail? }; throws when
         // Network cannot be read (the caller answers 503, never a guessed offline).
         pinStatus: (nodeId, runtimeClass, requester, opts) => placer.pinStatus(nodeId, runtimeClass, requester, opts),
