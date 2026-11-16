@@ -298,10 +298,6 @@ until Run has a product surface; the vhost below is installed then.
 | `migrations/0004_telemetry.sql` | `telemetry_samples`: request telemetry (openvibe-sdk 0.46, `platform.telemetry-sample@1`) — each HTTP request aggregated by route template, method and status class, never the raw URL, with `/shared` files, static assets, health, readiness and `/metrics` not counted; once a minute one `http.request` sample per key, plus the active-requests, p95 latency and event-loop-lag gauges; rows older than 14 days deleted daily; wired in `server/app.js` (`telemetryMiddleware`, a no-op until init) and `server/index.js` (`telemetry.init()` at production start, retention, flush on stop) |
 | `STATUS.json` | What this repository is, what it does today and where it runs |
 
-<!-- versions:start -->
-- openvibe-contracts: v0.433.0
-<!-- versions:end -->
-
 Compute placement, pool autoscaling, rental caps and the operator view are documented in
 [docs/compute-broker.md](docs/compute-broker.md). Rentals default to quote-only; keys and caps
 are never inferred from available credentials.
