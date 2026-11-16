@@ -11,6 +11,7 @@
  * | GET  /jobs/:id                    | run.job.read     | common.no-body@1 → run.job-read-result@1       |
  * | GET  /jobs?state=&limit=&cursor=  | run.job.list     | run.job-list-query@1 → run.job-list-result@1   |
  * | POST /jobs/:id/cancel             | run.job.cancel   | common.no-body@1 → run.job-read-result@1       |
+ * | POST /jobs/:id/stdin              | run.job.cancel   | { data ≤ 4096, eof } → { sent } (the job's controls: typing to it) |
  * | POST /jobs/:id/stream/ticket      | run.job.stream   | common.no-body@1 → run.job-stream-ticket-result@1 |
  * | GET  /jobs/:id/stream             | run.job.stream   | a ticket in the query or a Bearer token → text/event-stream of run.job-stream-event@1 |
  * | GET  /admin/jobs                  | run.job.admin    | run.job-list-query@1 (with project_id) → run.job-list-result@1 |
@@ -205,6 +206,21 @@ function v1Router({ config, db, apiAuth, stream, tickets, events, dispatch, now 
         if (out.cancelRequested) await dispatch.cancel(out.row);
         if (out.cancelled) stream.state(out.row.id, out.row.state, at);
         res.json(store.readResult(out.row));
+    }));
+
+    // ── POST /jobs/:id/stdin — run.job.cancel (the job's controls) ─────────────
+    // What the person typed to their running interactive job (2026-11-16): an agent's own sign-in reads the code its
+    // sign-in page shows. Only the job's own person (or the service acting for them: getJob's delegated rule) types to it.
+    r.post('/jobs/:id/stdin', guard('run.job.cancel'), wrap(async (req, res) => {
+        const row = await getJob(req, req.params.id, { delegated: true });
+        if (!row) fail(404, 'run.job_not_found', 'no such job');
+        const b = req.body || {};
+        const data = typeof b.data === 'string' ? b.data : '';
+        if (Buffer.byteLength(data) > 4096) fail(422, 'run.invalid_input', 'data is text of at most 4096 bytes');
+        if (row.state !== 'running') fail(409, 'run.job_not_running', 'the job is not running');
+        const out = await dispatch.stdin(row, { data, eof: b.eof === true });
+        if (out.reason === 'run.job_not_interactive') fail(409, out.reason, 'this job does not take input');
+        res.json({ job_id: row.id, sent: out.sent });
     }));
 
     // ── POST /jobs/:id/stream/ticket — run.job.stream ──────────────────────────

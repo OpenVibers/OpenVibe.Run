@@ -397,6 +397,27 @@ async function checks(t) {
         assert.strictEqual(cancelled.json.state, 'cancelled');
     });
 
+    await check('what the person types reaches only their own running job (POST /jobs/:id/stdin, 2026-11-16)', async () => {
+        const made = await t.call('POST', '/api/v1/jobs', { body: t.request(), ...cap(['run.job.submit'], projectA, 'svc:builder') });
+        const id = made.json.job.id;
+        const type = (body, who = cap(['run.job.cancel'], projectA, 'svc:builder')) => t.call('POST', `/api/v1/jobs/${id}/stdin`, { body, ...who });
+        const queued = await type({ data: 'the-code\n' });
+        assert.deepStrictEqual([queued.status, queued.json && queued.json.code], [409, 'run.job_not_running'], queued.text);
+        const store = require('../server/jobs/store');
+        const at = Date.now();
+        await store.mirror(t.db, id, { state: 'running', node_id: 'dev_01J8Z4M2Q0R7T9YV3K6N8P1W2X', provider: null, region: 'eu-west', started_ms: at, exit_reason: null, exit_code: null, result: null, wall_ms: 0, usage_read: 0 }, at);
+        const theirs = await type({ data: 'x' }, cap(['run.job.cancel'], projectB, 'svc:other'));
+        assert.strictEqual(theirs.status, 404, 'another project never reaches it');
+        const noCap = await type({ data: 'x' }, cap(['run.job.read'], projectA, 'svc:builder'));
+        assert.strictEqual(noCap.status, 403, noCap.text);
+        const big = await type({ data: 'x'.repeat(4097) });
+        assert.deepStrictEqual([big.status, big.json && big.json.code], [422, 'run.invalid_input']);
+        const ok = await type({ data: 'the-code\n' });
+        assert.strictEqual(ok.status, 200, ok.text);
+        assert.strictEqual(ok.json.job_id, id);
+        assert.strictEqual(typeof ok.json.sent, 'boolean', 'dispatch off in this test: not sent, and said so');
+    });
+
     await check('a running job (mirrored from Bot) is settled with its event and its error code', async () => {
         const made = await t.call('POST', '/api/v1/jobs', { body: t.request(), ...cap(['run.job.submit'], projectA, 'svc:builder') });
         const id = made.json.job.id;

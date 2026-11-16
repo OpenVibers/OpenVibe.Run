@@ -101,6 +101,8 @@ function createBotClient({ config, fetchImpl = globalThis.fetch, now = () => Dat
         },
         /** Ask Bot to stop a job; null when Bot has no such job (nothing to stop). Idempotent at Bot. */
         cancel: (jobId) => call('POST', `/api/v1/jobs/${encodeURIComponent(jobId)}/cancel`),
+        /** What the job's person typed to their running job (contracts 0.442.0 job_stdin); Bot checks it is their job. */
+        stdin: (jobId, body) => call('POST', `/api/v1/jobs/${encodeURIComponent(jobId)}/stdin`, { body }),
         /** Bot's own record of a job and the stdout it holds; null when Bot has never seen it. */
         state: (jobId) => call('GET', `/api/v1/jobs/${encodeURIComponent(jobId)}`),
         status: () => ({ enabled, note, bot_url: botUrl, audience: botAudience, capability: BOT_DISPATCH, timeout_ms: timeoutMs, token_url: tokenUrl }),
