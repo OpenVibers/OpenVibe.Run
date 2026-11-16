@@ -301,3 +301,9 @@ until Run has a product surface; the vhost below is installed then.
 Compute placement, pool autoscaling, rental caps and the operator view are documented in
 [docs/compute-broker.md](docs/compute-broker.md). Rentals default to quote-only; keys and caps
 are never inferred from available credentials.
+
+<!-- versions:start -->
+- openvibe-contracts: v0.443.0
+- openvibe-sdk: v0.177.0
+- openvibe-shared: v4.288.0
+<!-- versions:end -->
