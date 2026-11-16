@@ -27,6 +27,14 @@ async function testDb({ store = process.env.RUN_TEST_STORE || 'pglite', max = 4 
     const pw = crypto.randomBytes(16).toString('hex');
     const su = createDb({ url: process.env.OV_TEST_PG_DIRECT_URL, service: 'run-test-admin', max: 1, log: quiet });
     const database = await su.value('SELECT current_database()');
+    // Catalog DDL races other test files' catalog writes ('tuple concurrently updated', XX000): the files run in
+    // parallel and every one GRANTs CONNECT on the same database row. Retry it a few times, in setup as in drop
+    // (Run's pin PR #323 failed in setup, 11-16; Bot #486 did the same).
+    const ddl = async (stmt) => {
+        for (let i = 0; ; i++) {
+            try { return await su.query(stmt); } catch (err) { if (err.code !== 'XX000' || i >= 5) throw err; await new Promise((ok) => setTimeout(ok, 100 * (i + 1))); }
+        }
+    };
     for (const stmt of [
         `CREATE ROLE ${owner} LOGIN PASSWORD '${pw}'`,
         `CREATE ROLE ${name} LOGIN PASSWORD '${pw}'`,
@@ -39,7 +47,7 @@ async function testDb({ store = process.env.RUN_TEST_STORE || 'pglite', max = 4 
         `GRANT USAGE ON SCHEMA ${name} TO ${name}`,
         `ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA ${name} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${name}`,
         `ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA ${name} GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO ${name}`,
-    ]) await su.query(stmt);
+    ]) await ddl(stmt);
     const as = (url, user) => { const u = new URL(url); u.username = user; u.password = pw; return u.toString(); };
     async function drop() {
         try {
@@ -49,11 +57,6 @@ async function testDb({ store = process.env.RUN_TEST_STORE || 'pglite', max = 4 
                 if (!Number(left.rows[0].n)) break;
                 await new Promise((ok) => setTimeout(ok, 50));
             }
-            const ddl = async (stmt) => {
-                for (let i = 0; ; i++) {
-                    try { return await su.query(stmt); } catch (err) { if (err.code !== 'XX000' || i >= 5) throw err; await new Promise((ok) => setTimeout(ok, 100 * (i + 1))); }
-                }
-            };
             await ddl(`DROP SCHEMA IF EXISTS ${name} CASCADE`);
             for (const r of [name, owner]) { await ddl(`DROP OWNED BY ${r}`); await ddl(`DROP ROLE ${r}`); }
         } finally { await su.close(); }
