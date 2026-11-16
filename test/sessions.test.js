@@ -244,6 +244,10 @@ function fakeDesks() {
     });
 
     await check('a session created while a pass runs is placed by the next tick, not a whole interval later', async () => {
+        // The check before created sessions, and each creation started a pass. One still running here would reach the
+        // gate below first and hold it, and the first session's pass would wait behind it until the limit (test-pg,
+        // 11-16, twice): let every pass in flight finish before the gate shuts.
+        await sessions.tick();
         let open; desks.state.gate = new Promise((ok) => { open = ok; });
         try {
             const first = await t.call('POST', '/api/v1/sessions', { ...as(bea), body: { kind: 'browser' } });
