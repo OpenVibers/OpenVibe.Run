@@ -70,6 +70,14 @@ async function checks(t) {
         assert.strictEqual(rows.filter((e) => e.event_type === 'agent.step.started').length, 1, 'a repeat is never a second row');
     });
 
+    await check('a job another service started for the person publishes no step: that service shows it (11-18)', async () => {
+        const before = (await stepRows()).length;
+        const live = { token: t.network.signService({ sub: 'svc:live', cap: ['run.job.submit', 'run.job.read'] }), headers: { 'X-OV-Subject': ada, 'X-OV-Project': P } };
+        const made = await t.call('POST', '/api/v1/jobs', { body: t.request(), ...live });
+        assert.strictEqual(made.status, 201, made.text);
+        assert.strictEqual((await stepRows()).length, before, 'Live\'s speech-to-text is not the person\'s step');
+    });
+
     await check('a service\'s own job publishes no step: there is no person to show it to', async () => {
         const before = (await stepRows()).length;
         const made = await t.call('POST', '/api/v1/jobs', {

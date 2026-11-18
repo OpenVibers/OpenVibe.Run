@@ -89,6 +89,15 @@ const AGENT_CLASS_WORDS = Object.freeze({
     function: 'function', code: 'code', browser: 'browser', linux: 'Linux', desktop: 'desktop', gpu: 'GPU',
 });
 
+/**
+ * Whose delegated jobs Run shows as the person's own steps. A job a service started for a person is shown where that
+ * service shows its work (Actor's task, Codes' session, Tools' run), or is OpenVibe's own upkeep on the person's
+ * machine (Live's speech-to-text, Host's release checks: hundreds of jobs an hour on the owner's tower, which filled
+ * the owner's Sessions with "A Linux job" running, 11-18). Watch's automations have no page of their own, so their
+ * jobs stay steps. A job the person submitted themselves (no via) is always one.
+ */
+const STEP_VIA = new Set(['service:watch']);
+
 /** The job's step: what it is, where it runs, how it ended and where to see it — never args, inputs or output. */
 function agentStepOf(row, state, { baseUrl = null } = {}) {
     const job = toJob(row);
@@ -161,6 +170,7 @@ function createRunEvents({ outbox, now = () => Date.now(), log = console, config
 
     /** agent.step.started for queued/running and agent.step.ended for the four end states, as the same row. */
     async function enqueueAgentStep(t, row, state) {
+        if (row.via && !STEP_VIA.has(String(row.via))) return null;
         const person = toJob(row).requester;
         if (!person || person.type !== 'user' || !/^usr_[0-9A-HJKMNP-TV-Z]{26}$/.test(String(person.id || ''))) return null;
         const topic = AGENT_TOPIC_OF_STATE[state];
