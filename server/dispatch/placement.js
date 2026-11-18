@@ -308,7 +308,19 @@ function createPlacement({ config, db = null, fetchImpl = globalThis.fetch, now 
             names: displayNames, current: requirements.authority || null,
         });
         const result = placed.result;
-        const chosen = result.selected ? candidates.find((o) => o.offer_id === result.selected) : null;
+        let chosen = result.selected ? candidates.find((o) => o.offer_id === result.selected) : null;
+        let ownRetry = null;
+        // Nothing meets the learned bar ("Ask before going ahead?"), and a queued job has no one to ask. A person's own
+        // machine costs nothing to try again, so their job goes there, said so in the reasons; anything else still waits
+        // (11-18: one failed linux job, a misconfigured function, left the operator's only node at 47% and every later
+        // job of that class unplaceable).
+        if (!chosen && placed.fallback && person) {
+            const fb = candidates.find((o) => o.offer_id === placed.fallback.id);
+            if (fb && fb.trust === 'user-owned' && fb.owner === person) {
+                chosen = fb;
+                ownRetry = `below the learned bar (${Math.round(Number(placed.fallback.success) * 100)}% expected), but it is the person's own machine: tried again`;
+            }
+        }
         if (!chosen) {
             if (log && log.debug) log.debug(`[Run] job ${row.id}: no eligible offer for ${want} (${result.reasons.join('; ')})`);
             return null;
@@ -317,7 +329,7 @@ function createPlacement({ config, db = null, fetchImpl = globalThis.fetch, now 
             // A provider offer has no device: its own id stands for where the job went (the read result's node).
             node_id: chosen.kind === 'provider' ? (chosen.node_id || chosen.offer_id) : chosen.node_id,
             provider: chosen.provider ?? null, region: chosen.region ?? null, kind: chosen.kind,
-            offer_id: chosen.offer_id, trust: chosen.trust, reasons: [...result.reasons, ...(computeDecision ? [...computeDecision.reasons, `estimated ${computeDecision.hourly} ${computeDecision.currency}/hour`] : [])],
+            offer_id: chosen.offer_id, trust: chosen.trust, reasons: [...result.reasons, ...(ownRetry ? [ownRetry] : []), ...(computeDecision ? [...computeDecision.reasons, `estimated ${computeDecision.hourly} ${computeDecision.currency}/hour`] : [])],
             option_key: optionKey(chosen), step_kind: row.class,
             explain: publicExplain({ line: placed.line, ranked: placed.ranked, rejected: placed.rejected }),
         };
