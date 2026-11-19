@@ -305,5 +305,5 @@ are never inferred from available credentials.
 <!-- versions:start -->
 - openvibe-contracts: v0.449.0
 - openvibe-sdk: v0.188.0
-- openvibe-shared: v4.320.0
+- openvibe-shared: v4.322.0
 <!-- versions:end -->
