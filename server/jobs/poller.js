@@ -207,6 +207,17 @@ function createPoller({ config, db, store, events, stream, bot, provider = null,
         return raw;
     }
 
+    /**
+     * A failed job's error.detail from Bot's row: why the worker could not run it, in the Link's plain words
+     * (fault_detail, Contracts 0.457.0), else Bot's fault code. Until 11-28 a job that never ran had neither, so Codes
+     * told the person nothing and moved their task to another model.
+     */
+    function detailOf(b) {
+        const words = typeof b.fault_detail === 'string' ? b.fault_detail.replace(/\s+/g, ' ').trim().slice(0, 500) : '';
+        const code = b.fault_code ? `bot:${String(b.fault_code).slice(0, 64)}` : '';
+        return [words, code].filter(Boolean).join(' · ') || null;
+    }
+
     /** The node Bot reports must be the node Run placed on; a different one is refused, never adopted. */
     function nodeAgrees(row, raw) {
         if (raw.node_id == null || row.node_id == null || raw.node_id === row.node_id) return true;
@@ -390,7 +401,7 @@ function createPoller({ config, db, store, events, stream, bot, provider = null,
                 const s = await store.settle(t, row.id, {
                     state: moved, exit: b.exit_reason ?? null, code: b.exit_code ?? null,
                     result: b.result ?? null, wallMs: b.wall_ms ?? null,
-                    errorDetail: b.fault_code ? `bot:${String(b.fault_code).slice(0, 64)}` : null, at,
+                    errorDetail: detailOf(b), at,
                 });
                 if (s.changed) await events.ofState(t, s.row);
                 return s;

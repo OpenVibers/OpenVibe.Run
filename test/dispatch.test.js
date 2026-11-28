@@ -57,7 +57,7 @@ async function startFakeBot() {
     const present = (row) => ({
         id: row.id, node_id: row.node_id, class: row.class, state: row.state,
         project_id: row.project_id, subject: row.subject, provider: row.provider,
-        cancel_requested: row.cancel_requested, fault_code: row.fault_code ?? null,
+        cancel_requested: row.cancel_requested, fault_code: row.fault_code ?? null, fault_detail: row.fault_detail ?? null,
         sent_at: row.sent_at ?? null, started_ms: row.started_ms ?? null, finished_at: row.finished_at ?? null,
         exit_reason: row.exit_reason ?? null, exit_code: row.exit_code ?? null, wall_ms: row.wall_ms ?? null,
         usage_read: row.usage_read ?? 0, result: row.result ?? null, job: row.job,
@@ -141,9 +141,10 @@ async function startFakeBot() {
         row.chunks.push({ seq, chunk });
     }
     /** job_exit: the end state and the metered wall clock (Bot is the meter). */
-    function finish(row, { reason, code = 0, wallMs = 0, result = null }) {
+    function finish(row, { reason, code = 0, wallMs = 0, result = null, detail = null }) {
         row.state = reason === 'exited' && code === 0 ? 'succeeded' : reason === 'cancelled' ? 'cancelled' : reason === 'ttl' ? 'expired' : 'failed';
         row.exit_reason = reason; row.exit_code = code; row.wall_ms = wallMs; row.result = result;
+        row.fault_detail = reason === 'failed' ? detail : null;   // Bot keeps job_exit.detail only on a failed exit
         row.usage_read = Math.ceil(wallMs / 1000);
         row.finished_at = Date.now(); row.updated_at = Date.now();
     }
@@ -302,6 +303,21 @@ async function main() {
             assert.strictEqual(read2.json.state, 'failed');
             assert.strictEqual(read2.json.error.code, 'run.job.limit');               // job_exit reason limit
             assert.deepStrictEqual(read2.json.exit, { reason: 'limit', code: null });
+        });
+
+        await check('a job the worker could not run says why: Bot\'s fault_detail is the error detail', async () => {
+            const project = PROJECT();
+            const job = await submit({}, { project });
+            await t.dispatch.poll();
+            bot.exit(job.id, { reason: 'failed', code: null, wallMs: 0, detail: 'claude is not installed on this machine' });
+            await t.dispatch.poll();
+            const read1 = await read(job.id, project);
+            assert.strictEqual(read1.json.state, 'failed');
+            assert.strictEqual(read1.json.error.code, 'run.job.worker_failed');
+            assert.strictEqual(read1.json.error.detail, 'claude is not installed on this machine');
+            assert.ok(contracts.validate('run.job-read-result@1', read1.json).valid, read1.text);
+            const rows = await t.outboxRows('run.job.failed', job.id);
+            assert.ok(contracts.validate('run.job.failed@1', rows[0].payload).valid);
         });
 
         await check('the job\'s stdout reaches the SSE stream in order, with monotonic seq', async () => {
