@@ -303,7 +303,7 @@ Compute placement, pool autoscaling, rental caps and the operator view are docum
 are never inferred from available credentials.
 
 <!-- versions:start -->
-- openvibe-contracts: v0.449.0
+- openvibe-contracts: v0.454.0
 - openvibe-sdk: v0.190.0
 - openvibe-shared: v4.337.0
 <!-- versions:end -->
